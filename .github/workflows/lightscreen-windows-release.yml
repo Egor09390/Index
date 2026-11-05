@@ -1,0 +1,116 @@
+name: Lightscreen 2.5 autostart fix - Windows x64 release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/os.cpp'
+      - '.github/workflows/lightscreen-windows-release.yml'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lightscreen-v2.5-autostart-release
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    name: Windows x64 (Qt 5.15.2 / MinGW 8.1)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout fix repository
+        uses: actions/checkout@v4
+
+      - name: Download upstream Lightscreen 2.5 with submodules
+        shell: pwsh
+        run: |
+          git clone --depth 1 --recurse-submodules --branch v2.5 https://github.com/ckaiser/Lightscreen.git src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $originalBlob = (git -C src rev-parse 'HEAD:tools/os.cpp').Trim()
+          if ($originalBlob -ne '50bdc8a6eaf0c9605acdc98a29daf2668ea886ae') {
+            throw "Upstream v2.5 tools/os.cpp has changed ($originalBlob); refusing to replace an unknown file."
+          }
+          Copy-Item -LiteralPath tools/os.cpp -Destination src/tools/os.cpp -Force
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = Get-Content -Raw src/version.pri
+          $version = $version -replace '(?m)^VERSION = 2\.5\s*$', 'VERSION = 2.5-autostart.1'
+          [IO.File]::WriteAllText((Join-Path $PWD 'src/version.pri'), $version)
+          git -C src diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Qt 5.15.2 and matching MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: windows
+          arch: win64_mingw81
+          tools: 'tools_mingw,8.1.0-1-202004170606,qt.tools.win64_mingw810'
+
+      - name: Configure MinGW
+        shell: pwsh
+        run: |
+          if (!$env:IQTA_TOOLS) { throw 'Qt installation did not provide IQTA_TOOLS' }
+          $compilerDir = Join-Path $env:IQTA_TOOLS 'mingw810_64\bin'
+          if (!(Test-Path (Join-Path $compilerDir 'mingw32-make.exe'))) {
+            throw "Missing compatible MinGW 8.1 compiler at $compilerDir"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $compilerDir
+
+      - name: Compile with qmake
+        shell: pwsh
+        run: |
+          Push-Location src
+          qmake lightscreen.pro CONFIG+=release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          mingw32-make -j2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+
+      - name: Package portable Windows executable and complete source
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path src -Filter lightscreen.exe -File -Recurse |
+            Where-Object { $_.FullName -notmatch '\\.git\\' } |
+            Select-Object -First 1
+          if (!$exe) { throw 'Expected lightscreen.exe was not built' }
+
+          New-Item -ItemType Directory -Path dist\Lightscreen -Force | Out-Null
+          Copy-Item -LiteralPath $exe.FullName -Destination dist\Lightscreen\lightscreen.exe
+          Copy-Item -LiteralPath src\LICENSE -Destination dist\Lightscreen\LICENSE
+          Copy-Item -LiteralPath check-autostart.ps1 -Destination dist\Lightscreen\check-autostart.ps1
+
+          windeployqt --release --no-translations dist\Lightscreen\lightscreen.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Compress-Archive -Path dist\Lightscreen -DestinationPath dist\Lightscreen-2.5-autostart-win64.zip -Force
+          Compress-Archive -Path src\* -DestinationPath dist\Lightscreen-2.5-autostart-source.zip -Force
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightscreen-2.5-autostart-windows-and-source
+          path: |
+            dist/Lightscreen-2.5-autostart-win64.zip
+            dist/Lightscreen-2.5-autostart-source.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.5-autostart.1
+          target_commitish: ${{ github.sha }}
+          name: Lightscreen 2.5 - Windows autostart fix
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/Lightscreen-2.5-autostart-win64.zip
+            dist/Lightscreen-2.5-autostart-source.zip
+          body: |
+            Unofficial Lightscreen 2.5 build with a fix for intermittent or missing Windows autostart caused by unquoted executable paths.
+            The HKCU Run entry uses a quoted absolute path and respects the existing -h hidden-startup preference.
+            Includes portable Windows x64 executable with Qt DLLs and complete corresponding source (GPL-2.0-or-later) including submodules.
+            **Experimental:** Windows sign-in startup has not yet been manually verified.
+            Source upstream: https://github.com/ckaiser/Lightscreen/tree/v2.5
