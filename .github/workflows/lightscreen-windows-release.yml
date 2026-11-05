@@ -38,7 +38,7 @@ jobs:
           $version = Get-Content -Raw src/version.pri
           $version = $version -replace '(?m)^VERSION = 2\.5\s*$', 'VERSION = 2.5-autostart.1'
           [IO.File]::WriteAllText((Join-Path $PWD 'src/version.pri'), $version)
-          git -C src diff --check
+          git -C src -c core.whitespace=cr-at-eol diff --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install Qt 5.15.2 and matching MinGW
