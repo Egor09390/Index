@@ -297,7 +297,7 @@ void os::setStartup(bool startup, bool hide)
 
     if (startup) {
         desktopFile.open(QIODevice::WriteOnly);
-        desktopFile.write(QString("[Desktop Entry]\\nExec=%1\\nType=Application").arg(lightscreen).toLatin1());
+        desktopFile.write(QString("[Desktop Entry]\nExec=%1\nType=Application").arg(lightscreen).toLatin1());
     }
 #else
     Q_UNUSED(startup)
