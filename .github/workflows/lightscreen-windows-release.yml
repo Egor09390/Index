@@ -1,10 +1,12 @@
-name: Lightscreen 2.5 autostart fix - Windows x64 release
+name: Lightscreen 2.5 Windows autostart + fast area release
 
 on:
   push:
     branches: [main]
     paths:
       - 'tools/os.cpp'
+      - 'lightscreenwindow.cpp'
+      - 'dialogs/areadialog.cpp'
       - '.github/workflows/lightscreen-windows-release.yml'
       - 'README.md'
   workflow_dispatch:
@@ -13,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: lightscreen-v2.5-autostart-release
+  group: lightscreen-v2.5-fastarea-release
   cancel-in-progress: false
 
 jobs:
@@ -33,8 +35,23 @@ jobs:
           if ($originalBlob -ne '50bdc8a6eaf0c9605acdc98a29daf2668ea886ae') {
             throw "Upstream v2.5 tools/os.cpp has changed ($originalBlob); refusing to replace an unknown file."
           }
+          $expectedSources = @(
+            @{ path = 'lightscreenwindow.cpp'; sha = '856e74568dab9763ffc5d9bb7106aa6934c13d3f' },
+            @{ path = 'dialogs/areadialog.cpp'; sha = '5e43cc204e94e9e857621eb3fd207804fd7ccab5' }
+          )
+          foreach ($entry in $expectedSources) {
+            $sourceBlob = (git -C src rev-parse ("HEAD:" + $entry.path)).Trim()
+            if ($sourceBlob -ne $entry.sha) {
+              throw ("Upstream v2.5 file changed: " + $entry.path)
+            }
+          }
           Copy-Item -LiteralPath tools/os.cpp -Destination src/tools/os.cpp -Force
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -LiteralPath lightscreenwindow.cpp -Destination src/lightscreenwindow.cpp -Force
+          Copy-Item -LiteralPath dialogs/areadialog.cpp -Destination src/dialogs/areadialog.cpp -Force
+          # VERSION must be numeric for Windows resource compiler (windres).
+          (Get-Content -Raw -LiteralPath src/version.pri).Replace('VERSION = 2.5', 'VERSION = 2.5.2') |
+            Set-Content -LiteralPath src/version.pri -NoNewline
+
           git -C src -c core.whitespace=cr-at-eol diff --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -122,32 +139,38 @@ jobs:
             throw 'Qt Windows platform plugin qwindows.dll missing from the distributable'
           }
 
-          Compress-Archive -Path dist\Lightscreen -DestinationPath dist\Lightscreen-2.5-autostart-win64.zip -Force
-          Compress-Archive -Path src\* -DestinationPath dist\Lightscreen-2.5-autostart-source.zip -Force
+          Compress-Archive -Path dist\Lightscreen -DestinationPath dist\Lightscreen-2.5.2-fastarea-win64.zip -Force
+          Compress-Archive -Path src\* -DestinationPath dist\Lightscreen-2.5.2-fastarea-source.zip -Force
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lightscreen-2.5-autostart-windows-and-source
+          name: lightscreen-2.5.2-fastarea-windows-and-source
           path: |
-            dist/Lightscreen-2.5-autostart-win64.zip
-            dist/Lightscreen-2.5-autostart-source.zip
+            dist/Lightscreen-2.5.2-fastarea-win64.zip
+            dist/Lightscreen-2.5.2-fastarea-source.zip
           if-no-files-found: error
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.5-autostart.1
+          tag_name: v2.5.2-fastarea
           target_commitish: ${{ github.sha }}
-          name: Lightscreen 2.5 - Windows autostart fix
+          name: Lightscreen 2.5.2 - Windows fast F6 area + autostart fix
           prerelease: true
           fail_on_unmatched_files: true
           files: |
-            dist/Lightscreen-2.5-autostart-win64.zip
-            dist/Lightscreen-2.5-autostart-source.zip
+            dist/Lightscreen-2.5.2-fastarea-win64.zip
+            dist/Lightscreen-2.5.2-fastarea-source.zip
           body: |
-            Unofficial Lightscreen 2.5 build with a fix for intermittent or missing Windows autostart caused by unquoted executable paths.
-            The HKCU Run entry uses a quoted absolute path and respects the existing -h hidden-startup preference.
-            Includes portable Windows x64 executable with Qt DLLs and complete corresponding source (GPL-2.0-or-later) including submodules.
-            **Experimental:** Windows sign-in startup has not yet been manually verified.
-            Source upstream: https://github.com/ckaiser/Lightscreen/tree/v2.5
+            Unofficial Lightscreen **2.5.2** (based on upstream 2.5), portable Windows x64.
+            ### Fixes
+            - **F6 / Selected Area**: remove the fixed 400 ms pre-screenshot wait when the app is in the tray, and shorten the window-hide grace period to 100 ms.
+            - Show the Windows area-selection overlay on the first frame instead of waiting for the 300 ms opacity animation.
+            - Preserve any delay explicitly configured by the user under Options → Delay. Set it to 0 for the fastest F6 response.
+            - Keep the previous Windows autostart fix: quoted executable path in HKCU Run plus optional hidden startup (-h).
+            ### Files
+            - Lightscreen-2.5.2-fastarea-win64.zip: portable exe with Qt/MinGW DLLs.
+            - Lightscreen-2.5.2-fastarea-source.zip: corresponding GPL source based on upstream v2.5, including submodules.
+            **Experimental:** Build verified in GitHub Actions; actual F6-to-overlay latency and Windows sign-in startup have not been measured on a user's PC.
+            Original project: https://github.com/ckaiser/Lightscreen/tree/v2.5
