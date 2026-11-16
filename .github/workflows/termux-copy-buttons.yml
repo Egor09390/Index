@@ -28,17 +28,20 @@ jobs:
         working-directory: termux-src
         env:
           TERMUX_PACKAGE_VARIANT: apt-android-7
-          TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS: '0'
+          TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS: '1'
           TERMUX_APK_VERSION_TAG: copy-keys-${{ github.run_number }}
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+          set -euo pipefail
           ls -lh app/build/outputs/apk/debug/*.apk
+          test "$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' | wc -l)" -eq 1
+          test "$(find app/build/outputs/apk/debug -maxdepth 1 -name '*_arm64-v8a.apk' | wc -l)" -eq 1
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: termux-copy-buttons-apk
-          path: termux-src/app/build/outputs/apk/debug/*.apk
+          name: termux-copy-buttons-arm64-v8a
+          path: termux-src/app/build/outputs/apk/debug/*_arm64-v8a.apk
           if-no-files-found: error
       - name: Publish prerelease with APK
         env:
@@ -46,8 +49,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="termux-copy-buttons-${{ github.run_number }}"
-          gh release create "$tag" termux-src/app/build/outputs/apk/debug/*.apk \
+          gh release create "$tag" termux-src/app/build/outputs/apk/debug/*_arm64-v8a.apk \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Termux COPY/COPY1 build ${{ github.run_number }}" \
-            --notes "Unofficial Android 7+ debug APK. Official Termux source commit: 8629e632fcb95da272221be327db653fb24befe9. Custom patch: termux-copy-buttons.patch. COPY is a best-effort output filter, COPY1 includes the retained scrollback. Different APK signatures may prevent installing over an existing Termux." \
+            --title "Termux COPY/COPY1 ARM64-v8a build ${{ github.run_number }}" \
+            --notes "Unofficial Android 7+ arm64-v8a-only debug APK. Official Termux source commit: 8629e632fcb95da272221be327db653fb24befe9. Custom patch: termux-copy-buttons.patch. COPY is a best-effort output filter, COPY1 includes the retained scrollback. Different APK signatures may prevent installing over an existing Termux." \
             --prerelease
