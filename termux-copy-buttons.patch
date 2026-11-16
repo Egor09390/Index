@@ -1,0 +1,120 @@
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
+--- a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
+@@ -326,7 +326,7 @@
+     /** Defines the key for extra keys */
+     public static final String KEY_EXTRA_KEYS =  "extra-keys"; // Default: "extra-keys"
+     //public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]"; // Single row
+-    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Double row
++    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'COPY','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','COPY1']]"; // Double row
+ 
+     /** Defines the key for extra keys style */
+     public static final String KEY_EXTRA_KEYS_STYLE =  "extra-keys-style"; // Default: "extra-keys-style"
+diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+--- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
++++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+@@ -3537,8 +3537,59 @@
+         }
+     }
+ 
+-    /** If DECSET 2004 is set, prefix paste with "\033[200~" and suffix with "\033[201~". */
+-    public void paste(String text) {
++    // COPY uses a transcript snapshot at paste-time; terminal output also includes tty echo.
++    private String mCopyPasteSnapshot;
++    private String mCopyPastedText;
++
++    public void markCopiedPaste(String text) {
++        if (text == null || text.isEmpty()) return;
++        mCopyPasteSnapshot = mMainBuffer.getTranscriptTextWithoutJoinedLines();
++        mCopyPastedText = text;
++    }
++
++    public String getCopyAllText() {
++        return mMainBuffer.getTranscriptTextWithoutJoinedLines();
++    }
++
++    public String getCopyLastOutput() {
++        if (mCopyPasteSnapshot == null) return null;
++        String current = getCopyAllText();
++        int begin = 0;
++        if (current.startsWith(mCopyPasteSnapshot)) {
++            begin = mCopyPasteSnapshot.length();
++        } else {
++            // Handle rolled-over scrollback as far as overlapping lines allow.
++            int overlap = Math.min(8192, Math.min(mCopyPasteSnapshot.length(), current.length()));
++            while (overlap > 0 &&
++                !mCopyPasteSnapshot.regionMatches(mCopyPasteSnapshot.length() - overlap, current, 0, overlap))
++                overlap--;
++            begin = overlap;
++        }
++        String[] pasted = mCopyPastedText.replace("\r\n", "\n").replace('\r', '\n').split("\n");
++        String[] rows = current.substring(begin).split("\n", -1);
++        StringBuilder output = new StringBuilder();
++        for (int i = 0; i < rows.length; i++) {
++            String line = rows[i].trim();
++            boolean isInputEcho = false;
++            for (String original : pasted) {
++                String command = original.trim();
++                if (command.isEmpty() || !line.endsWith(command)) continue;
++                String prompt = line.substring(0, line.length() - command.length()).trim();
++                if (prompt.isEmpty() || "$#>%❯".indexOf(prompt.charAt(prompt.length() - 1)) >= 0) {
++                    isInputEcho = true;
++                    break;
++                }
++            }
++            if (isInputEcho) continue;
++            if (i == rows.length - 1 && line.matches(".*[$#>%❯]")) continue;
++            output.append(rows[i]).append('\n');
++        }
++        return output.toString().trim();
++    }
++
++    /** If DECSET 2004 is set, prefix paste with "\033[200~" and suffix with "\033[201~". */
++    public void paste(String text) {
++        markCopiedPaste(text);
+         // First: Always remove escape key and C1 control characters [0x80,0x9F]:
+         text = text.replaceAll("(\u001B|[\u0080-\u009F])", "");
+         // Second: Replace all newlines (\n) or CRLF (\r\n) with carriage returns (\r).
+diff --git a/terminal-view/src/main/java/com/termux/view/TerminalView.java b/terminal-view/src/main/java/com/termux/view/TerminalView.java
+--- a/terminal-view/src/main/java/com/termux/view/TerminalView.java
++++ b/terminal-view/src/main/java/com/termux/view/TerminalView.java
+@@ -357,6 +357,10 @@
+                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
+                     mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
+                 }
++                // Gboard usually pastes in a single multi-character IME event.
++                if (mEmulator != null && text != null && text.length() > 1)
++                    mEmulator.markCopiedPaste(text.toString());
++
+                 super.commitText(text, newCursorPosition);
+ 
+                 if (mEmulator == null) return true;
+diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
+--- a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
++++ b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
+@@ -93,6 +93,25 @@
+                 drawerLayout.closeDrawer(Gravity.LEFT);
+             else
+                 drawerLayout.openDrawer(Gravity.LEFT);
++        } else if ("COPY".equals(key) || "COPY1".equals(key)) {
++            TerminalView tv = mActivity.getTerminalView();
++            if (tv == null || tv.mEmulator == null) return;
++            String copied = "COPY".equals(key) ? tv.mEmulator.getCopyLastOutput() : tv.mEmulator.getCopyAllText();
++            if (copied == null || copied.isEmpty()) {
++                mActivity.showToast("No output to copy yet", false);
++                return;
++            }
++            // ClipboardManager uses size-limited Binder transactions.
++            if (copied.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 450000) {
++                mActivity.showToast("Output exceeds Android clipboard limit", true);
++                return;
++            }
++            try {
++                com.termux.shared.interact.ShareUtils.copyTextToClipboard(mActivity, copied);
++                mActivity.showToast("Copied " + copied.length() + " characters", false);
++            } catch (RuntimeException e) {
++                mActivity.showToast("Clipboard error: " + e.getMessage(), true);
++            }
+         } else if ("PASTE".equals(key)) {
+             if(mTermuxTerminalSessionActivityClient != null)
+                 mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
