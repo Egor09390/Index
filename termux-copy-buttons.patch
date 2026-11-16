@@ -6,7 +6,7 @@ diff --git a/termux-shared/src/main/java/com/termux/shared/termux/settings/prope
      public static final String KEY_EXTRA_KEYS =  "extra-keys"; // Default: "extra-keys"
      //public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]"; // Single row
 -    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Double row
-+    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'COPY','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','COPY1']]"; // Double row
++    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','COPY'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','FULL']]"; // Double row
  
      /** Defines the key for extra keys style */
      public static final String KEY_EXTRA_KEYS_STYLE =  "extra-keys-style"; // Default: "extra-keys-style"
@@ -96,7 +96,7 @@ diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKey
                  drawerLayout.closeDrawer(Gravity.LEFT);
              else
                  drawerLayout.openDrawer(Gravity.LEFT);
-+        } else if ("COPY".equals(key) || "COPY1".equals(key)) {
++        } else if ("COPY".equals(key) || "FULL".equals(key)) {
 +            TerminalView tv = mActivity.getTerminalView();
 +            if (tv == null || tv.mEmulator == null) return;
 +            String copied = "COPY".equals(key) ? tv.mEmulator.getCopyLastOutput() : tv.mEmulator.getCopyAllText();
