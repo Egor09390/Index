@@ -118,15 +118,20 @@ jobs:
           "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang" \
             -O2 -fPIE -pie amnezia-root/root-tun-fd.c -o amnezia-root-tun-arm64
           python3 amnezia-root/apply_overlay.py upstream --helper amnezia-root-tun-arm64
+          # Upstream Gradle release build requires QT_ANDROID_KEYSTORE_PATH,
+          # even when Qt's --sign flag is not used.
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/root-preview.jks" \
+            -storepass android -keypass android -alias preview \
+            -keyalg RSA -keysize 3072 -validity 1000 \
+            -dname "CN=Unofficial Root AWG Preview"
+          export QT_ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/root-preview.jks"
+          export QT_ANDROID_KEYSTORE_STORE_PASS=android
+          export QT_ANDROID_KEYSTORE_ALIAS=preview
           cd upstream
           export QT_INSTALL_DIR="$RUNNER_TEMP"
           deploy/build.sh -t android --abi arm64-v8a
       - name: Debug sign arm64 APK
         run: |
-          keytool -genkeypair -noprompt -keystore /tmp/root-preview.jks \
-            -storepass android -keypass android -alias preview \
-            -keyalg RSA -keysize 3072 -validity 1000 \
-            -dname "CN=Unofficial Root AWG Preview"
           APK="upstream/deploy/build/client/android-build/AmneziaVPN.apk"
           if [ ! -s "$APK" ]; then
             APK=$(find upstream/deploy/build -type f -name '*.apk' -print -quit)
@@ -134,7 +139,7 @@ jobs:
           test -n "$APK" && test -s "$APK"
           BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           "$BUILD_TOOLS/zipalign" -f 4 "$APK" root-aligned.apk
-          "$BUILD_TOOLS/apksigner" sign --ks /tmp/root-preview.jks \
+          "$BUILD_TOOLS/apksigner" sign --ks "$RUNNER_TEMP/root-preview.jks" \
             --ks-key-alias preview --ks-pass pass:android --key-pass pass:android \
             --out AmneziaVPN-Root-AWG-arm64-preview.apk root-aligned.apk
           "$BUILD_TOOLS/apksigner" verify --verbose AmneziaVPN-Root-AWG-arm64-preview.apk
