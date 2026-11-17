@@ -6,10 +6,10 @@ IFACE=awg0
 TABLE=2026
 DNS_CHAIN=AMN_ROOT_DNS
 V6_CHAIN=AMN_ROOT_V6
-ACTION="\${1:-}"
-UID_VALUE="\${2:-}"
-ADDRESS="\${3:-}"
-DNS="\${4:-}"
+ACTION="${1:-}"
+UID_VALUE="${2:-}"
+ADDRESS="${3:-}"
+DNS="${4:-}"
 
 case "$UID_VALUE" in ''|*[!0-9]*) echo "Invalid UID" >&2; exit 2 ;; esac
 [ "$UID_VALUE" -ge 10000 ] || { echo "Refusing system UID" >&2; exit 2; }
@@ -42,7 +42,7 @@ case "$ACTION" in
     ;;
   start)
     case "$ADDRESS" in
-      */*) IP="\${ADDRESS%/*}"; PREFIX="\${ADDRESS#*/}" ;;
+      */*) IP="${ADDRESS%/*}"; PREFIX="${ADDRESS#*/}" ;;
       *) echo "Missing CIDR" >&2; exit 2 ;;
     esac
     is_ipv4 "$IP" || { echo "Invalid client IPv4" >&2; exit 2; }
