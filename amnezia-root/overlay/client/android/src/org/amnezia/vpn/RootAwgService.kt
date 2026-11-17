@@ -142,7 +142,7 @@ class RootAwgService : Service() {
                 currentProto = proto
                 Prefs.save("AMNEZIA_ROOT_LAST_CONFIG", data)
                 state.value = CONNECTING
-                val wg = proto.createProtocol() as Wireguard
+                val wg = proto.protocol as Wireguard
                 wg.initialize(applicationContext, state, ::onError)
                 tunnel = wg
                 wg.startRootVpn(obj)
