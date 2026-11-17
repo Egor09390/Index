@@ -47,12 +47,14 @@ internal object RootTun {
         if (!local.exists()) check(local.mkdirs())
         for (name in assets) {
             val file = File(local, name)
-            context.assets.open(name).use { input -> file.outputStream().use(input::copyTo) }
+            context.assets.open(name).use { input -> file.outputStream().use { output -> input.copyTo(output) } }
             val dest = installed(name, context)
             // Only fixed application-private paths and fixed asset names reach the shell.
             root("cp '" + file.absolutePath + "' '" + dest + "' && chmod 700 '" + dest + "'")
         }
     }
+
+    fun prepare(context: Context) = ensureInstalled(context)
 
     fun cleanup(context: Context) {
         val script = installed(ROUTE_ASSET, context)
