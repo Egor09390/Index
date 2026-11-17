@@ -7,6 +7,8 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -26,15 +28,59 @@ object RootTun {
     private fun installed(name: String, context: Context): String =
         "/data/local/tmp/amnezia-" + uid(context) + "-" + name
 
-    private fun root(command: String, timeout: Long = 40): String {
-        val p = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+    // Some root managers expose su through an absolute location and do not
+    // include it in the isolated app process's PATH. Do not use a system
+    // shell fallback: this APK must either get uid 0 or fail visibly.
+    private val suCandidates = listOf(
+        "su", "/system/bin/su", "/system/xbin/su",
+        "/sbin/su", "/su/bin/su", "/debug_ramdisk/su"
+    )
+
+    private fun startSu(command: String): java.lang.Process {
+        val problems = mutableListOf<String>()
+        for (binary in suCandidates) {
+            try {
+                val builder = ProcessBuilder(binary, "-c", command)
+                    .redirectErrorStream(true)
+                val oldPath = builder.environment()["PATH"] ?: ""
+                builder.environment()["PATH"] = listOf(
+                    oldPath, "/system/bin", "/system/xbin", "/sbin", "/su/bin",
+                    "/debug_ramdisk", "/vendor/bin"
+                ).filter { it.isNotBlank() }.joinToString(":")
+                return builder.start()
+            } catch (e: IOException) {
+                problems += binary + " (" + (e.message ?: "not executable") + ")"
+            }
+        }
+        throw IllegalStateException(
+            "No su executable accessible to Amnezia. Grant org.amnezia.vpn " +
+            "root access in Magisk/KernelSU/APatch; check root-manager hiding. " +
+            "Checked: " + problems.joinToString("; ").take(380)
+        )
+    }
+
+    /** Check root inside the actual service process before changing any routes. */
+    fun requireRoot() {
+        val uid = root("id -u", timeout = 45)
+            .lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }
+        check(uid == "0") {
+            "su did not grant uid 0 to Amnezia. Allow root for org.amnezia.vpn " +
+            "in your root manager (received: " + (uid ?: "empty").take(60) + ")"
+        }
+    }
+
+    private fun root(command: String, timeout: Long = 45): String {
+        val p = startSu(command)
         try {
             if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
                 p.destroyForcibly()
-                error("Root command timed out")
+                error("Root authorization timed out. Allow org.amnezia.vpn in the root manager.")
             }
             val output = p.inputStream.bufferedReader().readText()
-            if (p.exitValue() != 0) error("Root command failed (" + p.exitValue() + "): " + output.take(700))
+            if (p.exitValue() != 0) {
+                error("su denied root command (exit " + p.exitValue() +
+                    "). Grant Amnezia root access. Details: " + output.take(380))
+            }
             return output
         } finally {
             p.destroy()
@@ -88,9 +134,17 @@ object RootTun {
         var process: java.lang.Process? = null
         try {
             val helper = installed(TUN_ASSET, context)
-            process = ProcessBuilder("su", "-c", "'" + helper + "' awg0 " + socketName)
-                .redirectErrorStream(true).start()
-            val client = future.get(40, TimeUnit.SECONDS)
+            process = startSu("'" + helper + "' awg0 " + socketName)
+            val client = try {
+                future.get(45, TimeUnit.SECONDS)
+            } catch (e: TimeoutException) {
+                val failure = if (!process.isAlive) {
+                    process.inputStream.bufferedReader().readText().take(380)
+                } else {
+                    "root prompt unanswered or TUN helper blocked by SELinux"
+                }
+                throw IllegalStateException("Root TUN helper did not connect: " + failure, e)
+            }
             client.use { connection ->
                 connection.soTimeout = 5000
                 check(connection.inputStream.read() == 1) { "Root TUN handshake failed" }
