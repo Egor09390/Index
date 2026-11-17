@@ -68,7 +68,6 @@ jobs:
     env:
       QT_VERSION: '6.10.3'
       QT_MODULES: 'qtremoteobjects qt5compat qtimageformats qtshadertools'
-      QT_INSTALL_DIR: ${{ runner.temp }}
       ANDROID_NDK_VERSION: 27.0.11718014
     steps:
       - uses: actions/checkout@v4
@@ -120,6 +119,7 @@ jobs:
             -O2 -fPIE -pie amnezia-root/root-tun-fd.c -o amnezia-root-tun-arm64
           python3 amnezia-root/apply_overlay.py upstream --helper amnezia-root-tun-arm64
           cd upstream
+          export QT_INSTALL_DIR="$RUNNER_TEMP"
           deploy/build.sh -t android --abi arm64-v8a
       - name: Debug sign arm64 APK
         run: |
