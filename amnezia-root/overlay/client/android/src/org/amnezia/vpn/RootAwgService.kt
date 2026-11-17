@@ -8,6 +8,8 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.widget.Toast
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -34,6 +36,7 @@ import org.amnezia.vpn.protocol.ProtocolState.DISCONNECTED
 import org.amnezia.vpn.protocol.ProtocolState.DISCONNECTING
 import org.amnezia.vpn.protocol.ProtocolState.UNKNOWN
 import org.amnezia.vpn.protocol.putStatus
+import org.amnezia.vpn.protocol.wireguard.RootTun
 import org.amnezia.vpn.protocol.wireguard.Wireguard
 import org.amnezia.vpn.util.Log
 import org.amnezia.vpn.util.Prefs
@@ -124,12 +127,39 @@ class RootAwgService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = messenger.binder
 
+    /**
+     * The Go/UDP backend runs in our own service process. Pin its sockets to a
+     * real Wi-Fi/cellular/ethernet network before starting it so a second
+     * Android VpnService cannot capture the AWG underlay transport.
+     */
+    private fun bindPhysicalNetwork() {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        fun select(transport: Int): Network? =
+            cm.allNetworks.firstOrNull { network ->
+                val caps = cm.getNetworkCapabilities(network)
+                caps != null &&
+                    caps.hasTransport(transport) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            }
+        val uplink = select(NetworkCapabilities.TRANSPORT_WIFI)
+            ?: select(NetworkCapabilities.TRANSPORT_ETHERNET)
+            ?: select(NetworkCapabilities.TRANSPORT_CELLULAR)
+            ?: error("No physical Wi-Fi/cellular uplink available for Root AWG")
+        check(cm.bindProcessToNetwork(uplink)) {
+            "Cannot bind Root AWG transport to physical network"
+        }
+    }
+
+    private fun releasePhysicalBinding() {
+        runCatching {
+            (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
+                .bindProcessToNetwork(null)
+        }
+    }
+
     private fun connect(config: String?) {
         if (connection?.isActive == true || state.value == CONNECTED) return
-        if (!RootMode.isEnabled()) {
-            onError("Root Mode is disabled")
-            return
-        }
         // Never silently coexist with our own Android VpnService: it would keep
         // the OS VPN slot occupied, and starting a second VPN would replace it.
         if (listOf(VpnProto.AWG, VpnProto.OPENVPN, VpnProto.XRAY).any {
@@ -143,6 +173,7 @@ class RootAwgService : Service() {
         if (data.isBlank()) return
         connection = scope.launch(Dispatchers.IO) {
             try {
+                RootMode.requireRoot()
                 val obj = JSONObject(data)
                 val proto = VpnProto.get(obj.getString("protocol"))
                 require(proto == VpnProto.AWG || proto == VpnProto.WIREGUARD) {
@@ -154,19 +185,29 @@ class RootAwgService : Service() {
                 val wg = proto.protocol as Wireguard
                 wg.initialize(applicationContext, state, ::onError)
                 tunnel = wg
+                bindPhysicalNetwork()
                 wg.startRootVpn(obj)
             } catch (_: CancellationException) {
                 // Disconnect handles cleanup and state transition.
             } catch (e: Exception) {
                 onError(e.message ?: "Root tunnel failed")
                 try { tunnel?.stopVpn() } catch (_: Exception) {}
+                RootTun.cleanup(applicationContext)
+                releasePhysicalBinding()
                 state.value = DISCONNECTED
             }
         }
     }
 
     private fun disconnect() {
-        if (state.value == DISCONNECTED || state.value == DISCONNECTING) return
+        if (state.value == DISCONNECTED) {
+            scope.launch(Dispatchers.IO) {
+                RootTun.cleanup(applicationContext)
+                releasePhysicalBinding()
+            }
+            return
+        }
+        if (state.value == DISCONNECTING) return
         state.value = DISCONNECTING
         scope.launch(Dispatchers.IO) {
             try {
@@ -175,6 +216,8 @@ class RootAwgService : Service() {
             } catch (e: Exception) {
                 onError("Root shutdown: " + e.message)
             } finally {
+                RootTun.cleanup(applicationContext)
+                releasePhysicalBinding()
                 tunnel = null
                 state.value = DISCONNECTED
             }
@@ -184,6 +227,14 @@ class RootAwgService : Service() {
     private fun onError(detail: String) {
         Log.e("RootAwgService", detail)
         scope.launch {
+            // Generic Qt ErrorCode 1000 hides the real cause. Expose it in
+            // a normal notification and toast; never include private keys.
+            runCatching {
+                Toast.makeText(applicationContext, "Root TUN: " + detail.take(240),
+                    Toast.LENGTH_LONG).show()
+                notification.updateNotification("Root error: " + detail.take(75),
+                    "Root TUN", DISCONNECTED)
+            }
             clients.send {
                 ServiceEvent.ERROR.packToMessage { putString(MSG_ERROR, detail) }
             }
@@ -200,7 +251,12 @@ class RootAwgService : Service() {
         }
         runBlocking(Dispatchers.IO) {
             connection?.cancelAndJoin()
-            try { tunnel?.stopVpn() } catch (_: Exception) {}
+            try {
+                tunnel?.stopVpn()
+            } finally {
+                RootTun.cleanup(applicationContext)
+                releasePhysicalBinding()
+            }
         }
         scope.cancel()
         super.onDestroy()

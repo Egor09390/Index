@@ -4,6 +4,7 @@
 Fails closed if upstream changes an anchor; never silently patches the wrong release.
 """
 import argparse
+import re
 import shutil
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def apply(root: Path, helper: Path) -> None:
     edit(root, activity,
          '    private fun getVpnProto(vpnConfig: String): VpnProto? = try {',
          '''    private fun serviceClassFor(proto: VpnProto): Class<*> =
-        if (RootMode.isEnabled()) RootAwgService::class.java else proto.serviceClass
+        RootAwgService::class.java
 
     private fun getVpnProto(vpnConfig: String): VpnProto? = try {''')
     edit(root, activity,
@@ -108,7 +109,7 @@ def apply(root: Path, helper: Path) -> None:
             ?: throw VpnStartException("Root mode requires an IPv4 client address")
         val dns = json.optString("dns1", "").trim()
         RootTun.prepare(context)
-        RootTun.cleanup(context)
+        RootTun.cleanup(context, strict = true)
         try {
             val fd = RootTun.open(context)
             tunnelHandle = GoBackend.awgTurnOn("awg0", fd, parsed.toWgUserspaceString())
@@ -169,82 +170,37 @@ def apply(root: Path, helper: Path) -> None:
         <service
             android:name=".AwgService"''')
 
-    header = "client/ui/controllers/settingsUiController.h"
-    edit(root, header,
-         '''    void toggleAmneziaDns(bool enable);''',
-         '''    bool isRootModeEnabled();
-    void toggleRootMode(bool enabled);
+    # Remove the previous settings toggle and the unused C++ settings methods:
+    # this build never enables Android's platform VPN, even when root is denied.
+    manifest_file = root / manifest
+    xml = manifest_file.read_text(encoding="utf-8")
+    for service_name in (".AwgService", ".OpenVpnService", ".XrayService"):
+        pattern = re.compile(
+            r'        <service\\n            android:name="' +
+            re.escape(service_name) + r'"[\\s\\S]*?        </service>\\n'
+        )
+        xml, count = pattern.subn("", xml, count=1)
+        if count != 1:
+            raise RuntimeError(f"Expected one Android VpnService component for {service_name}")
+    if 'android.net.VpnService' in xml:
+        raise RuntimeError("Platform VpnService component still registered")
+    manifest_file.write_text(xml, encoding="utf-8")
 
-    void toggleAmneziaDns(bool enable);''')
-    cpp = "client/ui/controllers/settingsUiController.cpp"
-    edit(root, cpp,
-         '''#ifdef Q_OS_ANDROID
-    #include "platforms/android/android_controller.h"
-#endif''',
-         '''#ifdef Q_OS_ANDROID
-    #include "platforms/android/android_controller.h"
-    #include <QJniObject>
-#endif''')
-    edit(root, cpp,
-         '''void SettingsUiController::toggleAmneziaDns(bool enable)
-{''',
-         '''bool SettingsUiController::isRootModeEnabled()
-{
-#ifdef Q_OS_ANDROID
-    return QJniObject::callStaticMethod<jboolean>(
-        "org/amnezia/vpn/RootMode", "isEnabled", "()Z");
-#else
-    return false;
-#endif
-}
+    # Delete the permission-request path from the actual root-only Activity.
+    activity_file = root / activity
+    source = activity_file.read_text(encoding="utf-8")
+    a = source.index("    private fun checkVpnPermission(")
+    b = source.index("    private fun showOnVpnPermissionRejectDialog(", a)
+    source = source[:a] + (
+        "    private fun checkVpnPermission(onPermissionGranted: () -> Unit) {\\n"
+        "        onPermissionGranted()\\n"
+        "    }\\n\\n"
+    ) + source[b:]
+    if "VpnService.prepare(" in source:
+        raise RuntimeError("Android VpnService permission request still present")
+    activity_file.write_text(source, encoding="utf-8")
 
-void SettingsUiController::toggleRootMode(bool enabled)
-{
-#ifdef Q_OS_ANDROID
-    QJniObject::callStaticMethod<jboolean>(
-        "org/amnezia/vpn/RootMode", "setEnabled", "(Z)Z",
-        static_cast<jboolean>(enabled));
-#else
-    Q_UNUSED(enabled);
-#endif
-}
-
-void SettingsUiController::toggleAmneziaDns(bool enable)
-{''')
-
-    qml = "client/ui/qml/Pages2/PageSettingsConnection.qml"
-    edit(root, qml,
-         '''                ListItemType {
-                    id: amneziaDnsRow''',
-         '''                ListItemType {
-                    id: rootModeRow
-                    Layout.fillWidth: true
-                    visible: Qt.platform.os === "android"
-                    text: qsTr("Root Mode (AWG / bypass Android VPN)")
-                    subtitle: rootModeSwitch.checked
-                        ? qsTr("ON: root TUN without Android VPN slot. Disconnect before changing modes.")
-                        : qsTr("OFF: standard Android VPN. A second VPN replaces this connection.")
-                    onClicked: {
-                        rootModeSwitch.toggle()
-                        rootModeSwitch.toggled()
-                    }
-                    SwitchType {
-                        id: rootModeSwitch
-                        focusPolicy: Qt.NoFocus
-                        checked: SettingsController.isRootModeEnabled()
-                        onToggled: {
-                            if (checked !== SettingsController.isRootModeEnabled()) {
-                                SettingsController.toggleRootMode(checked)
-                            }
-                            checked = SettingsController.isRootModeEnabled()
-                        }
-                    }
-                }
-
-                ListItemType {
-                    id: amneziaDnsRow''')
-
-    print("Applied root AWG overlay; upstream VpnService implementations are unchanged.")
+    print("Applied root-only AWG overlay; no Android VpnService components or mode toggle.")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
  *
  * The two assets are installed by the fork's Android build job for arm64-v8a.
  */
-internal object RootTun {
+object RootTun {
     private const val TUN_ASSET = "amnezia-root-tun-arm64"
     private const val ROUTE_ASSET = "amnezia-root-routing.sh"
     private val assets = listOf(TUN_ASSET, ROUTE_ASSET)
@@ -26,7 +26,7 @@ internal object RootTun {
     private fun installed(name: String, context: Context): String =
         "/data/local/tmp/amnezia-" + uid(context) + "-" + name
 
-    private fun root(command: String, timeout: Long = 15): String {
+    private fun root(command: String, timeout: Long = 40): String {
         val p = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
         try {
             if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
@@ -56,13 +56,13 @@ internal object RootTun {
 
     fun prepare(context: Context) = ensureInstalled(context)
 
-    fun cleanup(context: Context) {
+    fun cleanup(context: Context, strict: Boolean = false) {
         val script = installed(ROUTE_ASSET, context)
-        // The script may not exist yet, e.g. after application data was cleared.
         try {
             root("test ! -f '" + script + "' || sh '" + script + "' stop " + uid(context))
-        } catch (_: Exception) {
-            // Shutdown is best-effort; connect validates a clean state before routing.
+        } catch (e: Exception) {
+            // Do not start a new tunnel with stale global IP rules.
+            if (strict) throw IllegalStateException("Cannot remove stale Root TUN routing: " + e.message, e)
         }
     }
 
@@ -90,7 +90,7 @@ internal object RootTun {
             val helper = installed(TUN_ASSET, context)
             process = ProcessBuilder("su", "-c", "'" + helper + "' awg0 " + socketName)
                 .redirectErrorStream(true).start()
-            val client = future.get(15, TimeUnit.SECONDS)
+            val client = future.get(40, TimeUnit.SECONDS)
             client.use { connection ->
                 connection.soTimeout = 5000
                 check(connection.inputStream.read() == 1) { "Root TUN handshake failed" }

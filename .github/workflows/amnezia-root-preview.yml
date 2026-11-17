@@ -42,6 +42,10 @@ jobs:
           test -s upstream/client/android/src/org/amnezia/vpn/RootAwgService.kt
           grep -q 'android:foregroundServiceType="specialUse"' \
             upstream/client/android/AndroidManifest.xml
+          if grep -q 'android.net.VpnService' upstream/client/android/AndroidManifest.xml; then
+            echo "Android VpnService component must not exist in root-only APK" >&2
+            exit 1
+          fi
       - name: Package experimental source preview
         run: |
           tar -czf amnezia-root-source-preview.tar.gz \
@@ -141,15 +145,15 @@ jobs:
           "$BUILD_TOOLS/zipalign" -f 4 "$APK" root-aligned.apk
           "$BUILD_TOOLS/apksigner" sign --ks "$RUNNER_TEMP/root-preview.jks" \
             --ks-key-alias preview --ks-pass pass:android --key-pass pass:android \
-            --out AmneziaVPN-Root-AWG-arm64-preview.apk root-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose AmneziaVPN-Root-AWG-arm64-preview.apk
-          sha256sum AmneziaVPN-Root-AWG-arm64-preview.apk > APK-SHA256SUMS
+            --out AmneziaVPN-Root-Only-arm64-preview.apk root-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose AmneziaVPN-Root-Only-arm64-preview.apk
+          sha256sum AmneziaVPN-Root-Only-arm64-preview.apk > APK-SHA256SUMS
       - name: Attach APK ONLY after successful build
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "amnezia-root-source-${{ github.run_number }}" \
-            AmneziaVPN-Root-AWG-arm64-preview.apk APK-SHA256SUMS --clobber
+            AmneziaVPN-Root-Only-arm64-preview.apk APK-SHA256SUMS --clobber
           gh release edit "amnezia-root-source-${{ github.run_number }}" \
-            --notes "Experimental debug-signed Android arm64 APK from official Amnezia dev plus Root AWG source overlay. NOT device-tested. AWG/WireGuard only; no Xray TProxy."
+            --notes "Experimental root-only arm64 AWG APK; no registered Android VpnService. NOT device-tested. No Xray TProxy; double VPN unverified."

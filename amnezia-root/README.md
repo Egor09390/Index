@@ -1,4 +1,4 @@
-# Amnezia Android Root AWG 3.1 preview (NOT a production APK)
+# Amnezia Android root-only AWG preview (experimental)
 
 This directory is an **experimental source overlay** against
 [amnezia-vpn/amnezia-client](https://github.com/amnezia-vpn/amnezia-client), branch `dev`.
@@ -6,46 +6,37 @@ The original GitHub repository is read-only for this account. This overlay delib
 lives in a separate branch of the user's existing `Index` repository and does not
 modify the unrelated Windows Lightscreen project on `main`.
 
-## Supported scope
+## What this fork does
 
-- Opt-in **Root Mode** switch in Android connection settings, stored in the existing
-  encrypted Preferences store. Default is OFF. Enabling checks `su -c id -u`.
-- Regular Android `Service` with `specialUse` foreground type, separate from
-  the official `VpnService` classes, for **AWG / WireGuard only**.
-- Root-created `awg0` TUN descriptor passed into the upstream Go backend via
-  `SCM_RIGHTS` to preserve upstream AWG 3.1 protocol configuration serialization.
-- IPv4 policy route in table 2026, explicit exclusion of the client UID,
-  MTU 1280, TCP/UDP port-53 DNS DNAT, fail-closed IPv6 rejection,
-  disconnect cleanup, and network-change route-cache refresh.
-- No change to the standard VpnService flow when the switch is OFF.
+- **Root only**: no user toggle and **no registered Android VpnService**. It
+  refuses to connect if the user does not grant `su`; it never falls back
+  to Android's single VPN slot.
+- AWG/WireGuard through a separate ordinary foreground service, root-created
+  `awg0` TUN descriptor and upstream Go backend (AWG 3.1 config serialization).
+- Binds the AWG service process to physical Wi-Fi/Ethernet/cellular transport
+  so another Android VPN cannot capture the AWG UDP transport.
+- UID-excluding IPv4 route policy, managed DNS OUTPUT chain and IPv6 leak
+  blocking. Every route setup failure triggers an immediate rollback.
+- On disconnect/service destruction, cleans our IP rules, iptables chains,
+  route table and interface, including rules from the previous prototype.
+- Exposes Root TUN failure details by toast and notification, rather than
+  only Qt's uninformative ErrorCode 1000.
 
-**Not yet implemented:** Xray dokodemo-door TProxy interception,
-OpenVPN/Cloak root support, seamless migration of existing VPN connections,
-IPv6 dual-stack routing, complete split-tunneling semantics, device-tested
-SELinux compatibility, and Android-specific DNS resolver behavior (DoT/DoH).
+**Not implemented:** Root Xray TProxy, OpenVPN/Cloak underlay, IPv6 dual-stack,
+complete split-tunneling, and ROM-dependent SELinux compatibility.
 
-**Critical limitations:** the root path has not yet been compiled into a verified
-APK or run on a rooted device. /dev/tun availability, SELinux restrictions,
-`ip rule uidrange` support, `iptables` modules and access to the main route
-table vary by Android ROM. Do not treat an Actions artifact as confirmed
-working double-VPN support until verified on your device.
+**Validation:** A passing GitHub Actions build is not evidence that two
+simultaneous VPNs work on a physical device. Test only on a backed-up rooted
+ARM64 phone. Android / Magisk / kernel-dependent networking must be measured
+on the actual device before calling this production-ready.
 
-## Upstream files modified by apply_overlay.py
+## Upstream source changed by overlay
 
 - `client/android/src/org/amnezia/vpn/AmneziaActivity.kt`
 - `client/android/wireguard/src/main/kotlin/org/amnezia/vpn/protocol/wireguard/Wireguard.kt`
 - `client/android/AndroidManifest.xml`
-- `client/ui/controllers/settingsUiController.cpp`
-- `client/ui/controllers/settingsUiController.h`
-- `client/ui/qml/Pages2/PageSettingsConnection.qml`
-
-Added upstream files:
-
-- `client/android/src/org/amnezia/vpn/RootMode.kt`
-- `client/android/src/org/amnezia/vpn/RootAwgService.kt`
-- `client/android/wireguard/src/main/kotlin/org/amnezia/vpn/protocol/wireguard/RootTun.kt`
-- Build-generated `client/android/assets/amnezia-root-tun-arm64`
-- `client/android/assets/amnezia-root-routing.sh`
+- Added `RootMode.kt`, `RootAwgService.kt`, `RootTun.kt`
+- Asset `amnezia-root-routing.sh` and the ARM64 root TUN helper
 
 ## Manual build (Linux, Qt 6.10.3, Android NDK r27, SDK, CMake, Conan)
 
@@ -76,3 +67,18 @@ backup and test on a non-primary phone first.
 Upstream Amnezia VPN licenses remain applicable. This source preview contains
 only original helper code and modifications; use upstream's build and license
 notices when redistributing binaries.
+
+## Emergency recovery after the earlier toggle build
+
+The old opt-in build could leave IPv4 priority 5000 and IPv6 chains active
+after toggling OFF. The new start/stop script actively cleans the previous
+build's rules. If connectivity is still broken, use a root shell to inspect
+`ip -4 rule show`, `ip -4 route show table 2026`,
+`iptables -t nat -S AMN_ROOT_DNS` and
+`ip6tables -S AMN_ROOT_V6` before removing anything.
+Never flush all iptables tables: those are managed by Android/netd and
+other VPN applications.
+
+The GitHub preview signing key is regenerated per workflow run. Back up the
+server configuration before uninstalling an older preview to install an APK
+signed with a different key.

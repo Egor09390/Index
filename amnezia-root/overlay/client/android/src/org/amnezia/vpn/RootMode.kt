@@ -1,40 +1,32 @@
 package org.amnezia.vpn
 
 import android.os.Build
-import org.amnezia.vpn.util.Prefs
 import java.util.concurrent.TimeUnit
 
-/**
- * Explicit opt-in; persisted in the same multi-process preference store as the client.
- * Always disabled by default. Root is never requested by the standard VPN path.
- */
+/** This build is root-only. Never fall back to Android VpnService. */
 object RootMode {
-    private const val PREF_ROOT_MODE = "AMNEZIA_ROOT_MODE_ENABLED"
-
     @JvmStatic
-    fun isEnabled(): Boolean = Prefs.load<Boolean>(PREF_ROOT_MODE)
+    fun isEnabled(): Boolean = true
 
-    @JvmStatic
-    fun setEnabled(enabled: Boolean): Boolean {
-        if (enabled && (!Build.SUPPORTED_ABIS.contains("arm64-v8a") || !hasRoot())) {
-            return false
+    /** Fail visibly if root is unavailable; never silently start a platform VPN. */
+    fun requireRoot() {
+        require(Build.SUPPORTED_ABIS.contains("arm64-v8a")) {
+            "Root AWG requires an ARM64 Android device"
         }
-        Prefs.save(PREF_ROOT_MODE, enabled)
-        return true
-    }
-
-    private fun hasRoot(): Boolean {
         var process: Process? = null
-        return try {
-            process = ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start()
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+        try {
+            process = ProcessBuilder("su", "-c", "id -u")
+                .redirectErrorStream(true).start()
+            if (!process.waitFor(35, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
-                false
-            } else {
-                process.exitValue() == 0 && process.inputStream.bufferedReader().readText().trim() == "0"
+                error("Root authorization timed out; grant su access to Amnezia")
             }
-        } catch (_: Exception) {
-            false
+            val output = process.inputStream.bufferedReader().readText().trim()
+            check(process.exitValue() == 0 && output == "0") {
+                "Root authorization denied: grant su access to Amnezia"
+            }
+        } catch (e: java.io.IOException) {
+            throw IllegalStateException("Root executable 'su' unavailable", e)
         } finally {
             process?.destroy()
         }
