@@ -34,6 +34,23 @@ def apply(root: Path, helper: Path) -> None:
     activity = "client/android/src/org/amnezia/vpn/AmneziaActivity.kt"
     edit(root, activity, 'Intent(this, proto.serviceClass)',
          'Intent(this, serviceClassFor(proto))', expected=2)
+    # BIND_ABOVE_CLIENT and BIND_AUTO_CREATE are distinct bit flags. AND was
+    # always zero; a root service that is starting could not be bound reliably.
+    edit(root, activity,
+         'bindService(it, serviceConnection, BIND_ABOVE_CLIENT and BIND_AUTO_CREATE)',
+         'bindService(it, serviceConnection, BIND_ABOVE_CLIENT or BIND_AUTO_CREATE)')
+    edit(root, activity,
+         '''                if (AmneziaVpnService.isRunning(applicationContext, proto.processName)) {
+                    doBindService()
+                }''',
+         '''                val runningProcess = if (RootMode.isEnabled()) {
+                    "$packageName:amneziaRootAwgService"
+                } else {
+                    proto.processName
+                }
+                if (AmneziaVpnService.isRunning(applicationContext, runningProcess)) {
+                    doBindService()
+                }''')
     edit(root, activity,
          'if (proto.serviceClass == vpnProto?.serviceClass) {',
          'if (serviceClassFor(proto) == vpnProto?.let(::serviceClassFor)) {')
@@ -59,6 +76,15 @@ def apply(root: Path, helper: Path) -> None:
             Log.v(TAG, "Proto from config: $proto, current proto: $vpnProto")
             if (RootMode.isEnabled() && proto != VpnProto.AWG && proto != VpnProto.WIREGUARD) {
                 Toast.makeText(this, "Root mode supports AWG/WireGuard only", Toast.LENGTH_LONG).show()
+                QtAndroidController.onServiceError()
+                return@let
+            }
+            if (RootMode.isEnabled() && listOf(VpnProto.AWG, VpnProto.OPENVPN, VpnProto.XRAY).any {
+                    AmneziaVpnService.isRunning(applicationContext, it.processName)
+                }) {
+                Toast.makeText(this,
+                    "Stop the standard Amnezia VPN first, then connect with Root Mode",
+                    Toast.LENGTH_LONG).show()
                 QtAndroidController.onServiceError()
                 return@let
             }
@@ -195,7 +221,9 @@ void SettingsUiController::toggleAmneziaDns(bool enable)
                     Layout.fillWidth: true
                     visible: Qt.platform.os === "android"
                     text: qsTr("Root Mode (AWG / bypass Android VPN)")
-                    subtitle: qsTr("Experimental. Requires root and arm64; disconnect before switching.")
+                    subtitle: rootModeSwitch.checked
+                        ? qsTr("ON: root TUN without Android VPN slot. Disconnect before changing modes.")
+                        : qsTr("OFF: standard Android VPN. A second VPN replaces this connection.")
                     onClicked: {
                         rootModeSwitch.toggle()
                         rootModeSwitch.toggled()
