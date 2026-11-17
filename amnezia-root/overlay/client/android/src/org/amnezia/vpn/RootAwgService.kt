@@ -97,7 +97,7 @@ class RootAwgService : Service() {
             ContextCompat.RECEIVER_NOT_EXPORTED)
         scope.launch {
             state.collect { newState ->
-                notification.updateNotification(null, currentProto?.label, newState)
+                notification.updateNotification(null, "Root TUN " + (currentProto?.label ?: "AWG"), newState)
                 clients.send {
                     ServiceEvent.STATUS_CHANGED.packToMessage { putStatus(newState) }
                 }
@@ -128,6 +128,15 @@ class RootAwgService : Service() {
         if (connection?.isActive == true || state.value == CONNECTED) return
         if (!RootMode.isEnabled()) {
             onError("Root Mode is disabled")
+            return
+        }
+        // Never silently coexist with our own Android VpnService: it would keep
+        // the OS VPN slot occupied, and starting a second VPN would replace it.
+        if (listOf(VpnProto.AWG, VpnProto.OPENVPN, VpnProto.XRAY).any {
+                AmneziaVpnService.isRunning(applicationContext, it.processName)
+            }) {
+            state.value = DISCONNECTED
+            onError("Standard Amnezia VPN is still running. Disconnect it before starting Root TUN.")
             return
         }
         val data = config ?: Prefs.load<String>("AMNEZIA_ROOT_LAST_CONFIG")
