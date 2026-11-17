@@ -152,7 +152,8 @@ def apply(root: Path, helper: Path) -> None:
     edit(root, manifest,
          '''    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />''',
          '''    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />''')
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />''')
     edit(root, manifest,
          '''        <service
             android:name=".AwgService"''',
