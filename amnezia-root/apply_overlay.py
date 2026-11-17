@@ -176,8 +176,8 @@ def apply(root: Path, helper: Path) -> None:
     xml = manifest_file.read_text(encoding="utf-8")
     for service_name in (".AwgService", ".OpenVpnService", ".XrayService"):
         pattern = re.compile(
-            r'        <service\\n            android:name="' +
-            re.escape(service_name) + r'"[\\s\\S]*?        </service>\\n'
+            r'        <service\n            android:name="' +
+            re.escape(service_name) + r'"[\s\S]*?        </service>\n'
         )
         xml, count = pattern.subn("", xml, count=1)
         if count != 1:
@@ -192,9 +192,9 @@ def apply(root: Path, helper: Path) -> None:
     a = source.index("    private fun checkVpnPermission(")
     b = source.index("    private fun showOnVpnPermissionRejectDialog(", a)
     source = source[:a] + (
-        "    private fun checkVpnPermission(onPermissionGranted: () -> Unit) {\\n"
-        "        onPermissionGranted()\\n"
-        "    }\\n\\n"
+        "    private fun checkVpnPermission(onPermissionGranted: () -> Unit) {\n"
+        "        onPermissionGranted()\n"
+        "    }\n\n"
     ) + source[b:]
     if "VpnService.prepare(" in source:
         raise RuntimeError("Android VpnService permission request still present")

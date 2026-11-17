@@ -35,7 +35,7 @@ cleanup() {
 }
 
 is_ipv4() {
-  echo "$1" | grep -Eq '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' || return 1
+  echo "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
   oldifs="$IFS"; IFS=.
   set -- $1
   IFS="$oldifs"
