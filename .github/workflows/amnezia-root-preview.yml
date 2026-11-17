@@ -1,0 +1,147 @@
+name: Amnezia Android root AWG preview
+
+on:
+  push:
+    branches: [feature/amnezia-root-awg31-preview]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  source-preview:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+      - name: Checkout official Amnezia dev and submodules
+        uses: actions/checkout@v4
+        with:
+          repository: amnezia-vpn/amnezia-client
+          ref: dev
+          path: upstream
+          submodules: recursive
+      - name: Set up Android SDK and NDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-28 ndk;27.0.11718014"
+      - name: Compile arm64 root TUN helper
+        run: |
+          NDK="$ANDROID_HOME/ndk/27.0.11718014"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" \
+            -O2 -fPIE -pie -Wall -Wextra -Werror \
+            amnezia-root/root-tun-fd.c -o amnezia-root-tun-arm64
+          file amnezia-root-tun-arm64
+      - name: Apply source overlay and validate syntax
+        run: |
+          python3 -m py_compile amnezia-root/apply_overlay.py
+          sh -n amnezia-root/root-routing.sh
+          python3 amnezia-root/apply_overlay.py upstream \
+            --helper amnezia-root-tun-arm64
+          test -s upstream/client/android/assets/amnezia-root-tun-arm64
+          test -s upstream/client/android/src/org/amnezia/vpn/RootAwgService.kt
+          grep -q 'android:foregroundServiceType="specialUse"' \
+            upstream/client/android/AndroidManifest.xml
+      - name: Package experimental source preview
+        run: |
+          tar -czf amnezia-root-source-preview.tar.gz \
+            amnezia-root/README.md amnezia-root/apply_overlay.py \
+            amnezia-root/root-tun-fd.c amnezia-root/root-routing.sh \
+            amnezia-root/overlay
+          sha256sum amnezia-root-source-preview.tar.gz > SHA256SUMS
+      - name: Publish source-only prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "amnezia-root-source-${{ github.run_number }}" \
+            amnezia-root-source-preview.tar.gz SHA256SUMS \
+            --target "${{ github.sha }}" \
+            --title "Amnezia Root AWG 3.1 experimental source ${{ github.run_number }}" \
+            --notes "SOURCE PREVIEW ONLY. No verified APK. Root AWG/WireGuard only. No Xray TProxy. Rooted arm64 Android device testing required. Unofficial overlay for amnezia-vpn/amnezia-client dev." \
+            --prerelease
+
+  android-apk:
+    needs: source-preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      QT_VERSION: '6.10.3'
+      QT_MODULES: 'qtremoteobjects qt5compat qtimageformats qtshadertools'
+      QT_INSTALL_DIR: ${{ runner.temp }}
+      ANDROID_NDK_VERSION: 27.0.11718014
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: amnezia-vpn/amnezia-client
+          ref: dev
+          path: upstream
+          submodules: recursive
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK/NDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-30 ndk;27.0.11718014"
+      - name: Install host Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: ${{ env.QT_MODULES }}
+          dir: ${{ runner.temp }}
+          py7zrversion: '==0.22.*'
+      - name: Install arm64 Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: all_os
+          target: android
+          arch: android_arm64_v8a
+          modules: ${{ env.QT_MODULES }}
+          dir: ${{ runner.temp }}
+          py7zrversion: '==0.22.*'
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+          python3 -m pip install --user "conan==2.28.0"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build modified Amnezia APK
+        run: |
+          NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang" \
+            -O2 -fPIE -pie amnezia-root/root-tun-fd.c -o amnezia-root-tun-arm64
+          python3 amnezia-root/apply_overlay.py upstream --helper amnezia-root-tun-arm64
+          cd upstream
+          deploy/build.sh -t android --abi arm64-v8a
+      - name: Debug sign arm64 APK
+        run: |
+          keytool -genkeypair -noprompt -keystore /tmp/root-preview.jks \
+            -storepass android -keypass android -alias preview \
+            -keyalg RSA -keysize 3072 -validity 1000 \
+            -dname "CN=Unofficial Root AWG Preview"
+          APK=$(find upstream/deploy/build -type f -name '*arm64*v8a*.apk' | head -n 1)
+          test -n "$APK"
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BUILD_TOOLS/zipalign" -f 4 "$APK" root-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign --ks /tmp/root-preview.jks \
+            --ks-key-alias preview --ks-pass pass:android --key-pass pass:android \
+            --out AmneziaVPN-Root-AWG-arm64-preview.apk root-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose AmneziaVPN-Root-AWG-arm64-preview.apk
+          sha256sum AmneziaVPN-Root-AWG-arm64-preview.apk > APK-SHA256SUMS
+      - name: Attach APK ONLY after successful build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "amnezia-root-source-${{ github.run_number }}" \
+            AmneziaVPN-Root-AWG-arm64-preview.apk APK-SHA256SUMS --clobber
+          gh release edit "amnezia-root-source-${{ github.run_number }}" \
+            --notes "Experimental debug-signed Android arm64 APK from official Amnezia dev plus Root AWG source overlay. NOT device-tested. AWG/WireGuard only; no Xray TProxy."
