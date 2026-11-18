@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.widget.Toast
 import android.os.Build
 import android.os.Handler
@@ -25,10 +26,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.amnezia.vpn.protocol.ProtocolState
 import org.amnezia.vpn.protocol.ProtocolState.CONNECTED
 import org.amnezia.vpn.protocol.ProtocolState.CONNECTING
@@ -54,6 +58,54 @@ class RootAwgService : Service() {
     private var tunnel: Wireguard? = null
     private var currentProto: VpnProto? = null
     private val notification by lazy { ServiceNotification(this) }
+
+    // Root routing setup is blocking; a separate VPN can appear while AWG
+    // initializes. Never switch policies until all our RPDB rules exist.
+    @Volatile private var routingReady = false
+    private val routingMutex = Mutex()
+    private var stackedMode: Boolean? = null
+    private var vpnWatchRegistered = false
+
+    private fun requestStackedRoutingSync() {
+        scope.launch(Dispatchers.IO) {
+            // Give netd time to add/remove the corresponding VPN RPDB rules.
+            delay(250)
+            try {
+                syncStackedRouting()
+            } catch (e: Exception) {
+                onError("VPN-over-AWG routing update: " + (e.message ?: "unknown error"))
+            }
+        }
+    }
+
+    /**
+     * Android publishes a TRANSPORT_VPN network when the second VpnService
+     * establishes its tunnel. Our AWG tunnel is not registered as a VPN
+     * network, so this detects only the upper system VPN.
+     */
+    private val upperVpnCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = requestStackedRoutingSync()
+        override fun onLost(network: Network) = requestStackedRoutingSync()
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
+            requestStackedRoutingSync()
+    }
+
+    private suspend fun syncStackedRouting() {
+        routingMutex.withLock {
+            if (!routingReady || tunnel == null) return@withLock
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+            val hasUpperVpn = cm.allNetworks.any { network ->
+                cm.getNetworkCapabilities(network)
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+            if (stackedMode == hasUpperVpn) return@withLock
+            RootTun.setStacked(applicationContext, hasUpperVpn)
+            stackedMode = hasUpperVpn
+            Log.i("RootAwgService",
+                if (hasUpperVpn) "Second Android VPN detected; AWG underlay enabled"
+                else "No Android VPN; AWG routes ordinary app traffic")
+        }
+    }
 
     private val handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
@@ -85,7 +137,10 @@ class RootAwgService : Service() {
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             if (state.value == CONNECTED) scope.launch(Dispatchers.IO) {
-                try { tunnel?.refreshRootRouting() } catch (e: Exception) {
+                try {
+                    tunnel?.refreshRootRouting()
+                    syncStackedRouting()
+                } catch (e: Exception) {
                     Log.e("RootAwgService", "Route refresh failed: " + e.message)
                 }
             }
@@ -98,6 +153,16 @@ class RootAwgService : Service() {
         ContextCompat.registerReceiver(this, receiver,
             IntentFilter().apply { addAction(ACTION_CONNECT); addAction(ACTION_DISCONNECT) },
             ContextCompat.RECEIVER_NOT_EXPORTED)
+        try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+            val vpnRequest = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                .build()
+            cm.registerNetworkCallback(vpnRequest, upperVpnCallback)
+            vpnWatchRegistered = true
+        } catch (e: Exception) {
+            Log.e("RootAwgService", "Cannot watch system VPN: " + e.message)
+        }
         scope.launch {
             state.collect { newState ->
                 notification.updateNotification(null, "Root TUN " + (currentProto?.label ?: "AWG"), newState)
@@ -112,6 +177,7 @@ class RootAwgService : Service() {
                         networkBound = true
                     } catch (e: Exception) { Log.e("RootAwgService", "Network callback failed: " + e.message) }
                 }
+                if (newState == CONNECTED) requestStackedRoutingSync()
             }
         }
     }
@@ -187,9 +253,13 @@ class RootAwgService : Service() {
                 tunnel = wg
                 bindPhysicalNetwork()
                 wg.startRootVpn(obj)
+                routingReady = true
+                syncStackedRouting()
             } catch (_: CancellationException) {
                 // Disconnect handles cleanup and state transition.
             } catch (e: Exception) {
+                routingReady = false
+                stackedMode = null
                 onError(e.message ?: "Root tunnel failed")
                 try { tunnel?.stopVpn() } catch (_: Exception) {}
                 RootTun.cleanup(applicationContext)
@@ -200,6 +270,8 @@ class RootAwgService : Service() {
     }
 
     private fun disconnect() {
+        routingReady = false
+        stackedMode = null
         if (state.value == DISCONNECTED) {
             scope.launch(Dispatchers.IO) {
                 RootTun.cleanup(applicationContext)
@@ -242,7 +314,15 @@ class RootAwgService : Service() {
     }
 
     override fun onDestroy() {
+        routingReady = false
+        stackedMode = null
         try { unregisterReceiver(receiver) } catch (_: Exception) {}
+        if (vpnWatchRegistered) {
+            try {
+                (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
+                    .unregisterNetworkCallback(upperVpnCallback)
+            } catch (_: Exception) {}
+        }
         if (networkBound) {
             try {
                 (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
