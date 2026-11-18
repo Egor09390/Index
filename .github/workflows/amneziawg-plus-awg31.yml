@@ -1,0 +1,113 @@
+name: AmneziaWG+ AWG 3.1 release
+
+on:
+  push:
+    branches:
+      - release/amneziawg-plus-awg31
+  workflow_dispatch:
+
+concurrency:
+  group: amneziawg-plus-awg31
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      preview_key: ${{ steps.sign.outputs.preview_key }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-java@v5
+        with:
+          distribution: jetbrains
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v5
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0 cmake;3.22.1 ndk;26.1.10909125'
+      - name: Test config parsing and assemble APKs
+        run: ./gradlew --no-daemon :tunnel:testDebugUnitTest :ui:assembleRelease
+      - name: Sign and verify APKs
+        id: sign
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          keyfile="$RUNNER_TEMP/amneziawg-plus.p12"
+          if [[ -n "$KEYSTORE_B64" ]]; then
+            : "${KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD is required}"
+            : "${KEY_ALIAS:?ANDROID_KEY_ALIAS is required}"
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keyfile"
+            KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            echo 'preview_key=false' >> "$GITHUB_OUTPUT"
+          else
+            KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+            KEY_PASSWORD="$KEYSTORE_PASSWORD"
+            KEY_ALIAS=awg31-preview
+            keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$keyfile" \
+              -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" -keyalg RSA \
+              -keysize 3072 -validity 3650 -dname 'CN=AmneziaWG Plus AWG 3.1 Preview'
+            echo 'preview_key=true' >> "$GITHUB_OUTPUT"
+          fi
+
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p dist
+          for abi in arm64-v8a armeabi-v7a x86 x86_64 universal; do
+            input="ui/build/outputs/apk/release/ui-$abi-release-unsigned.apk"
+            output="dist/AmneziaWG-Plus-2.1.0-$abi.apk"
+            "$tools/zipalign" -P 16 -f 4 "$input" "$RUNNER_TEMP/aligned.apk"
+            "$tools/apksigner" sign --ks "$keyfile" --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+              --out "$output" "$RUNNER_TEMP/aligned.apk"
+            "$tools/apksigner" verify "$output"
+            rm -f "$output.idsig"
+          done
+          unzip -Z1 dist/AmneziaWG-Plus-2.1.0-arm64-v8a.apk > "$RUNNER_TEMP/apk-files.txt"
+          grep -Fx 'lib/arm64-v8a/libawg-tun-creator.so' "$RUNNER_TEMP/apk-files.txt"
+          grep -Fx 'lib/arm64-v8a/libwg-go.so' "$RUNNER_TEMP/apk-files.txt"
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amneziawg-plus-awg31
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: amneziawg-plus-awg31
+          path: dist
+      - name: Publish tested APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREVIEW_KEY: ${{ needs.build.outputs.preview_key }}
+        run: |
+          set -euo pipefail
+          tag=amneziawg-plus-v2.1.0-awg3.1
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists"
+            exit 0
+          fi
+          notes="AmneziaWG+ with AWG 3.1 config import and userspace engine from the official Android release v3.1.20260814. Root mode uses the original AWG+ TUN and routing implementation. Config unit tests pass. A rooted Android device was not used for validation."
+          if [[ "$PREVIEW_KEY" == true ]]; then
+            notes="$notes This APK uses a one-off preview certificate. Export tunnels before replacing any installed copy that has a different signer."
+          fi
+          gh release create "$tag" dist/*.apk dist/SHA256SUMS --target "$GITHUB_SHA" \
+            --title 'AmneziaWG+ 2.1.0 · AWG 3.1' --notes "$notes" --prerelease --latest=false

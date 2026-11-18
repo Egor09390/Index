@@ -1,23 +1,85 @@
-# Lightscreen 2.5 — Windows autostart fix
+# AmneziaWG+
 
-This repository hosts the Windows build of [Lightscreen 2.5](https://github.com/ckaiser/Lightscreen/tree/v2.5) with a targeted fix for autostart commands containing spaces in the executable path.
+Android GUI for [AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)
 
-The modified `tools/os.cpp` is based on upstream tag `v2.5` (GPL-2.0-or-later). The Windows release workflow checks out upstream Lightscreen, replaces this file with the patched version, builds with Qt 5.15.2 and publishes both runnable Windows binaries and the complete source code (including third-party submodules).
+> [!NOTE]
+> This is a fork of the original [amneziawg-android](https://github.com/amnezia-vpn/amneziawg-android) with additional features listed below. For the upstream version, please visit the [original repository](https://github.com/amnezia-vpn/amneziawg-android).
 
-**The release is experimental until the first Windows build and sign-in test pass.** This patch does not override Windows Startup Apps being disabled by the user or a policy.
+## ✨ Additional features
 
-## Fix
+- **Android 5.0+ support** — Minimum SDK lowered to 21 (Android 5.0 Lollipop).
+- **Root mode** — Optional tunnel backend that uses root access to create TUN interfaces and configure routing via `iptables`/`ip route`, completely bypassing the Android VPN API. No VPN icon in the status bar, no VPN permission dialogs. All device traffic is routed through the tunnel. Can be enabled in settings. **Requires a rooted device** (SuperSU, Magisk tested).
+- **Tasker plugin** — Integrates as a Tasker action plugin for automation. Select a tunnel and action (on/off/toggle) directly from Tasker.
+- **Token-based intent authentication** — Replaced the `CONTROL_TUNNELS` Android permission with a simple token for intent API authentication. No need to declare permissions in the calling app's manifest — just pass the token as an intent extra. More compatible with `adb`, scripts, and automation tools.
+- **Per-ABI APKs** — Separate APKs for each CPU architecture (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`). Smaller download size compared to a universal APK.
+- **UI fixes:**
+  - Fixed dark theme colors — buttons and accents were invisible on dark backgrounds due to incorrect `colorPrimary` for dark mode.
+  - Fixed edge-to-edge layout overlap on Android 15+ — settings and other screens no longer render behind the status bar and toolbar.
+  - All settings are now shown at once — removed the collapsible "Advanced" section which rendered incorrectly on older Android versions.
+  - Added a "Log" action to tunnel error notifications — quickly jump to the log viewer for error details.
 
-The original Windows Run registry value was an unquoted path. This breaks launching Lightscreen when the executable lives inside a folder containing spaces, such as `C:\Program Files (x86)\Lightscreen\lightscreen.exe`.
+## 🤖 Automation
 
-This build writes:
+### 🔌 Tasker plugin
 
-```text
-"C:\Program Files (x86)\Lightscreen\lightscreen.exe" -h
+Requires **"Allow Tasker plugin"** to be enabled in settings.
+
+The app registers as a [Tasker](https://tasker.joaoapps.com/) action plugin:
+
+1. In Tasker: **Task → Add Action → Plugin → AmneziaWG Tunnel Control**
+2. Tap the pencil icon to configure
+3. Select a tunnel and action (**Turn on** / **Turn off** / **Toggle**)
+4. Tap **Save**
+
+The plugin appears automatically in Tasker's plugin list once the app is installed. It also works with other automation apps that support the Locale plugin protocol (e.g. [MacroDroid](https://www.macrodroid.com/)).
+
+### 📡 Intent API
+
+Requires **"Allow remote intents"** to be enabled in settings.
+
+External apps can control tunnels via broadcast intents. Authentication is done via a token that is generated when you enable "Allow remote intents". You can view, copy, or regenerate the token in the **"Remote control token"** settings entry.
+
+| Action | Extras | Description |
+|--------|--------|-------------|
+| `org.amnezia.awg.action.SET_TUNNEL_UP` | `tunnel` (String), `token` (String) | Bring tunnel up |
+| `org.amnezia.awg.action.SET_TUNNEL_DOWN` | `tunnel` (String), `token` (String) | Bring tunnel down |
+| `org.amnezia.awg.action.REFRESH_TUNNEL_STATES` | — | Refresh all tunnel states (always available, no token needed) |
+
+Example using `adb`:
+
+```bash
+adb shell am broadcast -a org.amnezia.awg.action.SET_TUNNEL_UP \
+  -e tunnel "my-tunnel" \
+  -e token "AbCdEf1234" \
+  -n org.amnezia.awg/.model.TunnelManager\$IntentReceiver
 ```
 
-using `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, with a check for registry errors. Administrative privileges are not required.
+## 🔨 Building
 
-## Upstream attribution
+```
+$ git clone --recurse-submodules https://github.com/Gruven/amneziawg-android
+$ cd amneziawg-android
+$ ./gradlew assembleRelease
+```
 
-Lightscreen by Christian Kaiser and contributors, licensed GPL-2.0-or-later; see [upstream](https://github.com/ckaiser/Lightscreen) and included `LICENSE` in source archives. The fix is independently maintained and not an official upstream release.
+macOS users may need [flock(1)](https://github.com/discoteq/flock).
+
+## 🐛 Issues
+
+Issues are welcome as long as they relate to the [additional features](#-additional-features) of this fork (AmneziaWG+). If you encounter a bug of the original application (AmneziaWG), please open an issue in the [upstream repository](https://github.com/amnezia-vpn/amneziawg-android/issues).
+
+## 🤝 Contributing
+
+PRs are welcome — bug fixes, documentation improvements, refactoring. The exception is new features: please open a [feature request](https://github.com/Gruven/amneziawg-android/issues) first to discuss the idea before starting work.
+
+## 👀 But why?..
+
+This project primarily aims to support devices that, for whatever reason, are still running older versions of Android. In my case, it's the head unit in my 2021 car, which runs Android 5.1 with the VPN API stripped out.
+
+But! This project also includes quality-of-life features that make it worth using on modern devices too (which I do on my phone).
+
+## ⭐️ Alternatives
+
+If the extra features of this project don't interest you, consider these alternatives:
+- [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) (Android 7+) — the original app.
+- [WG Tunnel](https://github.com/wgtunnel/android) (Android 8+) — an excellent alternative WG/AWG client with many additional features and a polished UI.

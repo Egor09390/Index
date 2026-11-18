@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:key="settings">
+    <org.amnezia.awg.preference.VersionPreference
+        android:icon="@drawable/ic_icon"
+        android:key="version" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="restore_on_boot"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/restore_on_boot_summary_off"
+        android:summaryOn="@string/restore_on_boot_summary_on"
+        android:title="@string/restore_on_boot_title" />
+    <org.amnezia.awg.preference.ZipExporterPreference android:key="zip_exporter" />
+    <org.amnezia.awg.preference.QuickTilePreference android:key="quick_tile"
+            tools:targetApi="33" />
+    <Preference
+        android:key="log_viewer"
+        android:singleLineTitle="false"
+        android:summary="@string/log_viewer_pref_summary"
+        android:title="@string/log_viewer_pref_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="dark_theme"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/dark_theme_summary_off"
+        android:summaryOn="@string/dark_theme_summary_on"
+        android:title="@string/dark_theme_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="disable_battery_optimization"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/battery_optimization_summary_off"
+        android:summaryOn="@string/battery_optimization_summary_on"
+        android:title="@string/battery_optimization_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="enable_root_mode"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/root_mode_summary_off"
+        android:summaryOn="@string/root_mode_summary_on"
+        android:title="@string/root_mode_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="enable_process_protection"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/process_protection_summary_off"
+        android:summaryOn="@string/process_protection_summary_on"
+        android:title="@string/process_protection_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="multiple_tunnels"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/multiple_tunnels_summary_off"
+        android:summaryOn="@string/multiple_tunnels_summary_on"
+        android:title="@string/multiple_tunnels_title" />
+    <org.amnezia.awg.preference.ToolsInstallerPreference android:key="tools_installer" />
+    <org.amnezia.awg.preference.KernelModuleEnablerPreference android:key="kernel_module_enabler" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="allow_remote_control_intents"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/allow_remote_control_intents_summary_off"
+        android:summaryOn="@string/allow_remote_control_intents_summary_on"
+        android:title="@string/allow_remote_control_intents_title" />
+    <Preference
+        android:key="remote_control_token"
+        android:singleLineTitle="false"
+        android:title="@string/remote_control_token_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="allow_tasker_plugin"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/allow_tasker_plugin_summary_off"
+        android:summaryOn="@string/allow_tasker_plugin_summary_on"
+        android:title="@string/allow_tasker_plugin_title" />
+</androidx.preference.PreferenceScreen>

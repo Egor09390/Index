@@ -1,0 +1,105 @@
+name: Upload Assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of existing release to upload assets to"
+        required: true
+        type: string
+
+concurrency:
+  group: release-tag-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Validate tag exists
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        git ls-remote --tags "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" "refs/tags/${TAG}" | grep -q . \
+          || { echo "::error::Tag '${TAG}' does not exist"; exit 1; }
+
+  check-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should-build: ${{ steps.check.outputs.should-build }}
+    steps:
+    - name: Verify release exists and check assets
+      id: check
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG_NAME: ${{ inputs.tag || github.event.release.tag_name }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' > /tmp/assets.txt 2>/dev/null \
+          || { echo "::error::Release for tag '${TAG_NAME}' does not exist. Create it first."; exit 1; }
+        if [[ "${EVENT_NAME}" == "release" ]] && grep -q '\.apk$' /tmp/assets.txt; then
+          echo "::notice::Release '${TAG_NAME}' already has APK assets — skipping build"
+          echo "should-build=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "should-build=true" >> "$GITHUB_OUTPUT"
+        fi
+
+  build:
+    needs: [validate, check-release]
+    if: ${{ !cancelled() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && needs.check-release.result == 'success' && needs.check-release.outputs.should-build == 'true' }}
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+    with:
+      target: release_apk
+      ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+    secrets:
+      CHECKOUT_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+  upload:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download build artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: release-apk
+        path: artifacts/
+
+    - name: Rename artifacts
+      shell: bash
+      env:
+        TAG_NAME: ${{ inputs.tag || github.event.release.tag_name }}
+      run: |
+        set -euo pipefail
+        for APK in artifacts/*.apk; do
+          BASENAME="$(basename "${APK}")"
+          ABI="$(echo "${BASENAME}" | sed -n 's/^ui-\(.*\)-release.*\.apk$/\1/p')"
+          if [[ -n "${ABI}" ]]; then
+            mv "${APK}" "artifacts/AmneziaWG-Plus-${TAG_NAME}-${ABI}.apk"
+          else
+            mv "${APK}" "artifacts/AmneziaWG-Plus-${TAG_NAME}.apk"
+          fi
+        done
+
+    - name: Upload assets to existing release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG_NAME: ${{ inputs.tag || github.event.release.tag_name }}
+      run: |
+        gh release upload "${TAG_NAME}" artifacts/*.apk \
+          --repo "${GITHUB_REPOSITORY}" \
+          --clobber
