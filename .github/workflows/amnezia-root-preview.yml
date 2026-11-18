@@ -31,14 +31,18 @@ jobs:
           "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" \
             -O2 -fPIE -pie -Wall -Wextra -Werror \
             amnezia-root/root-tun-fd.c -o amnezia-root-tun-arm64
-          file amnezia-root-tun-arm64
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" \
+            -O2 -fPIE -pie -Wall -Wextra -Werror \
+            amnezia-root/ksu-root-exec.c -o libamnezia_ksu_root.so
+          file amnezia-root-tun-arm64 libamnezia_ksu_root.so
       - name: Apply source overlay and validate syntax
         run: |
           python3 -m py_compile amnezia-root/apply_overlay.py
           sh -n amnezia-root/root-routing.sh
           python3 amnezia-root/apply_overlay.py upstream \
-            --helper amnezia-root-tun-arm64
+            --helper amnezia-root-tun-arm64 --ksu-helper libamnezia_ksu_root.so
           test -s upstream/client/android/assets/amnezia-root-tun-arm64
+          test -s upstream/client/android/libs/arm64-v8a/libamnezia_ksu_root.so
           test -s upstream/client/android/src/org/amnezia/vpn/RootAwgService.kt
           grep -q 'android:foregroundServiceType="specialUse"' \
             upstream/client/android/AndroidManifest.xml
@@ -50,7 +54,8 @@ jobs:
         run: |
           tar -czf amnezia-root-source-preview.tar.gz \
             amnezia-root/README.md amnezia-root/apply_overlay.py \
-            amnezia-root/root-tun-fd.c amnezia-root/root-routing.sh \
+            amnezia-root/root-tun-fd.c amnezia-root/ksu-root-exec.c \
+            amnezia-root/root-routing.sh \
             amnezia-root/overlay
           sha256sum amnezia-root-source-preview.tar.gz > SHA256SUMS
       - name: Publish source-only prerelease
@@ -121,7 +126,11 @@ jobs:
           NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
           "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang" \
             -O2 -fPIE -pie amnezia-root/root-tun-fd.c -o amnezia-root-tun-arm64
-          python3 amnezia-root/apply_overlay.py upstream --helper amnezia-root-tun-arm64
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang" \
+            -O2 -fPIE -pie -Wall -Wextra -Werror \
+            amnezia-root/ksu-root-exec.c -o libamnezia_ksu_root.so
+          python3 amnezia-root/apply_overlay.py upstream \
+            --helper amnezia-root-tun-arm64 --ksu-helper libamnezia_ksu_root.so
           # Upstream Gradle release build requires QT_ANDROID_KEYSTORE_PATH,
           # even when Qt's --sign flag is not used.
           keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/root-preview.jks" \
@@ -142,6 +151,8 @@ jobs:
           fi
           test -n "$APK" && test -s "$APK"
           BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          # The native executable must survive Qt/Gradle JNI packaging.
+          unzip -l "$APK" | grep -F "lib/arm64-v8a/libamnezia_ksu_root.so"
           "$BUILD_TOOLS/zipalign" -f 4 "$APK" root-aligned.apk
           "$BUILD_TOOLS/apksigner" sign --ks "$RUNNER_TEMP/root-preview.jks" \
             --ks-key-alias preview --ks-pass pass:android --key-pass pass:android \
@@ -156,4 +167,4 @@ jobs:
           gh release upload "amnezia-root-source-${{ github.run_number }}" \
             AmneziaVPN-Root-Only-arm64-preview.apk APK-SHA256SUMS --clobber
           gh release edit "amnezia-root-source-${{ github.run_number }}" \
-            --notes "Experimental root-only arm64 AWG APK; no registered Android VpnService. NOT device-tested. No Xray TProxy; double VPN unverified."
+            --notes "Experimental root-only ARM64 AWG. Authorized KernelSU Samsung v2.2 native GRANT_ROOT path for DFRoot late-load if su is hidden. No VpnService. Not device-tested; double VPN unverified."
