@@ -46,6 +46,9 @@ cleanup() {
   ip -4 rule del pref 5001 uidrange "$UID_ABOVE"-4294967294 lookup "$TABLE" 2>/dev/null || :
   # Also remove our previous experimental build's global rule.
   ip -4 rule del pref 5000 lookup "$TABLE" 2>/dev/null || :
+  # An APK reinstall can change the app UID, so purge the previous version's
+  # 5001 rule by our owned priority+table rather than the new UID range.
+  ip -4 rule del pref 5001 lookup "$TABLE" 2>/dev/null || :
   ip -4 rule del pref 100 uidrange "$UID_VALUE"-"$UID_VALUE" lookup main 2>/dev/null || :
   ip -4 route flush table "$TABLE" 2>/dev/null || :
   ip link del "$IFACE" 2>/dev/null || :
