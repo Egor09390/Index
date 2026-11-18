@@ -157,6 +157,8 @@ class RootAwgService : Service() {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
             val vpnRequest = NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                // NetworkRequest defaults to NOT_VPN; remove it explicitly.
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                 .build()
             cm.registerNetworkCallback(vpnRequest, upperVpnCallback)
             vpnWatchRegistered = true
