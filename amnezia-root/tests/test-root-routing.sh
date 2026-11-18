@@ -46,20 +46,24 @@ chmod +x "$TMP/ip" "$TMP/iptables" "$TMP/ip6tables"
 PATH="$TMP:$PATH"
 export PATH
 
-# Start has a protected underlay rule, a standard AWG rule, and a fallback.
+# Start has protected VPN-provider transport rules and ordinary AWG rules.
+# It MUST NOT install priority 27550/27551: Android UID-default VPN rules
+# at priority 29000 could otherwise be silently bypassed.
 sh "$ROUTES" start 10555 10.9.8.2/32 1.1.1.1
-for priority in 12550 12551 20550 20551 27550 27551; do
+for priority in 12550 12551 20550 20551; do
   grep -q "^${priority}:" "$MOCK_RULES"
 done
+! grep -Eq '^(27550|27551):' "$MOCK_RULES"
 grep -q 'ip -4 rule add pref 12550 fwmark 0x20000/0x20000' "$MOCK_LOG"
+grep -q "ip6tables -A AMN_ROOT_V6 -o tun+ -j RETURN" "$MOCK_LOG"
 
-# The second VPN must replace 205xx, but not the marked underlay or fallback.
+# The upper VPN must own ALL ordinary traffic, including UID-default VPN
+# priority 29000. Only protected underlay routing remains in AWG.
 sh "$ROUTES" vpn-on 10555
-for priority in 12550 12551 27550 27551; do
+for priority in 12550 12551; do
   grep -q "^${priority}:" "$MOCK_RULES"
 done
-! grep -q '^20550:' "$MOCK_RULES"
-! grep -q '^20551:' "$MOCK_RULES"
+! grep -Eq '^(20550|20551|27550|27551):' "$MOCK_RULES"
 grep -q 'iptables -t nat -D OUTPUT -j AMN_ROOT_DNS' "$MOCK_LOG"
 
 # Disconnecting the upper VPN restores ordinary AWG routing and DNS.
