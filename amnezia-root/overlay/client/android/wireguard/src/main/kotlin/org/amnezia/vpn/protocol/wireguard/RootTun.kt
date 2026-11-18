@@ -28,62 +28,82 @@ object RootTun {
     private fun installed(name: String, context: Context): String =
         "/data/local/tmp/amnezia-" + uid(context) + "-" + name
 
-    // Some root managers expose su through an absolute location and do not
-    // include it in the isolated app process's PATH. Do not use a system
-    // shell fallback: this APK must either get uid 0 or fail visibly.
+    // DFRoot/KernelSU late-load may authorize this app even when su is absent
+    // in the app's mount namespace. Test both su and the bundled KernelSU
+    // GRANT_ROOT launcher, which honors the root manager's UID allowlist.
     private val suCandidates = listOf(
         "su", "/system/bin/su", "/system/xbin/su",
         "/sbin/su", "/su/bin/su", "/debug_ramdisk/su"
     )
+    @Volatile private var selectedLauncher: String? = null
 
-    private fun startSu(command: String): java.lang.Process {
-        val problems = mutableListOf<String>()
-        for (binary in suCandidates) {
+    private fun launcherCandidates(context: Context): List<String> =
+        suCandidates + File(context.applicationInfo.nativeLibraryDir,
+            "libamnezia_ksu_root.so").absolutePath
+
+    private fun startLauncher(executable: String, command: String): java.lang.Process {
+        val builder = ProcessBuilder(executable, "-c", command)
+            .redirectErrorStream(true)
+        val oldPath = builder.environment()["PATH"] ?: ""
+        builder.environment()["PATH"] = listOf(
+            oldPath, "/system/bin", "/system/xbin", "/sbin", "/su/bin",
+            "/debug_ramdisk", "/vendor/bin"
+        ).filter { it.isNotBlank() }.joinToString(":")
+        return builder.start()
+    }
+
+    /** Verify uid 0 inside the actual Android service process. */
+    fun requireRoot(context: Context) {
+        if (selectedLauncher != null) return
+        val failures = mutableListOf<String>()
+        for (launcher in launcherCandidates(context)) {
+            var process: java.lang.Process? = null
             try {
-                val builder = ProcessBuilder(binary, "-c", command)
-                    .redirectErrorStream(true)
-                val oldPath = builder.environment()["PATH"] ?: ""
-                builder.environment()["PATH"] = listOf(
-                    oldPath, "/system/bin", "/system/xbin", "/sbin", "/su/bin",
-                    "/debug_ramdisk", "/vendor/bin"
-                ).filter { it.isNotBlank() }.joinToString(":")
-                return builder.start()
+                process = startLauncher(launcher, "id -u")
+                if (!process.waitFor(35, TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    failures += File(launcher).name + ": timed out"
+                    continue
+                }
+                val reply = process.inputStream.bufferedReader().readText().trim()
+                if (process.exitValue() == 0 && reply.lineSequence().lastOrNull() == "0") {
+                    selectedLauncher = launcher
+                    return
+                }
+                failures += File(launcher).name + ": " +
+                    (reply.takeLast(170).ifBlank { "exit " + process.exitValue() })
             } catch (e: IOException) {
-                problems += binary + " (" + (e.message ?: "not executable") + ")"
+                failures += File(launcher).name + ": " + (e.message ?: "unavailable")
+            } finally {
+                process?.destroy()
             }
         }
         throw IllegalStateException(
-            "No su executable accessible to Amnezia. Grant org.amnezia.vpn " +
-            "root access in Magisk/KernelSU/APatch; check root-manager hiding. " +
-            "Checked: " + problems.joinToString("; ").take(380)
+            "KernelSU Samsung root launcher failed. Tried su and native KSU " +
+            "GRANT_ROOT: " + failures.joinToString("; ").takeLast(450)
         )
     }
 
-    /** Check root inside the actual service process before changing any routes. */
-    fun requireRoot() {
-        val uid = root("id -u", timeout = 45)
-            .lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }
-        check(uid == "0") {
-            "su did not grant uid 0 to Amnezia. Allow root for org.amnezia.vpn " +
-            "in your root manager (received: " + (uid ?: "empty").take(60) + ")"
-        }
+    private fun startRoot(context: Context, command: String): java.lang.Process {
+        if (selectedLauncher == null) requireRoot(context)
+        return startLauncher(checkNotNull(selectedLauncher), command)
     }
 
-    private fun root(command: String, timeout: Long = 45): String {
-        val p = startSu(command)
+    private fun root(context: Context, command: String, timeout: Long = 45): String {
+        val process = startRoot(context, command)
         try {
-            if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
-                p.destroyForcibly()
-                error("Root authorization timed out. Allow org.amnezia.vpn in the root manager.")
+            if (!process.waitFor(timeout, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                error("Root command timed out")
             }
-            val output = p.inputStream.bufferedReader().readText()
-            if (p.exitValue() != 0) {
-                error("su denied root command (exit " + p.exitValue() +
-                    "). Grant Amnezia root access. Details: " + output.take(380))
+            val output = process.inputStream.bufferedReader().readText()
+            if (process.exitValue() != 0) {
+                error("KernelSU command failed (" + process.exitValue() +
+                    "): " + output.take(400))
             }
             return output
         } finally {
-            p.destroy()
+            process.destroy()
         }
     }
 
@@ -96,7 +116,7 @@ object RootTun {
             context.assets.open(name).use { input -> file.outputStream().use { output -> input.copyTo(output) } }
             val dest = installed(name, context)
             // Only fixed application-private paths and fixed asset names reach the shell.
-            root("cp '" + file.absolutePath + "' '" + dest + "' && chmod 700 '" + dest + "'")
+            root(context, "cp '" + file.absolutePath + "' '" + dest + "' && chmod 700 '" + dest + "'")
         }
     }
 
@@ -105,7 +125,7 @@ object RootTun {
     fun cleanup(context: Context, strict: Boolean = false) {
         val script = installed(ROUTE_ASSET, context)
         try {
-            root("test ! -f '" + script + "' || sh '" + script + "' stop " + uid(context))
+            root(context, "test ! -f '" + script + "' || sh '" + script + "' stop " + uid(context))
         } catch (e: Exception) {
             // Do not start a new tunnel with stale global IP rules.
             if (strict) throw IllegalStateException("Cannot remove stale Root TUN routing: " + e.message, e)
@@ -114,7 +134,7 @@ object RootTun {
 
     fun refresh(context: Context) {
         val script = installed(ROUTE_ASSET, context)
-        root("sh '" + script + "' refresh " + uid(context))
+        root(context, "sh '" + script + "' refresh " + uid(context))
     }
 
     fun installRouting(context: Context, clientIpv4: String, dnsIpv4: String) {
@@ -122,7 +142,7 @@ object RootTun {
         require(clientIpv4.matches(Regex("[0-9./]+"))) { "Expected IPv4 CIDR" }
         require(dnsIpv4.isEmpty() || dnsIpv4.matches(Regex("[0-9.]+"))) { "Expected IPv4 DNS" }
         val script = installed(ROUTE_ASSET, context)
-        root("sh '" + script + "' start " + uid(context) + " '" + clientIpv4 + "' '" + dnsIpv4 + "'")
+        root(context, "sh '" + script + "' start " + uid(context) + " '" + clientIpv4 + "' '" + dnsIpv4 + "'")
     }
 
     fun open(context: Context): Int {
@@ -134,7 +154,7 @@ object RootTun {
         var process: java.lang.Process? = null
         try {
             val helper = installed(TUN_ASSET, context)
-            process = startSu("'" + helper + "' awg0 " + socketName)
+            process = startRoot(context, "'" + helper + "' awg0 " + socketName)
             val client = try {
                 future.get(45, TimeUnit.SECONDS)
             } catch (e: TimeoutException) {
