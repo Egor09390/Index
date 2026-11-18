@@ -104,6 +104,14 @@ class RootAwgService : Service() {
             Log.i("RootAwgService",
                 if (hasUpperVpn) "Second Android VPN detected; AWG underlay enabled"
                 else "No Android VPN; AWG routes ordinary app traffic")
+            // Indicates network recognition, not a verified upper VPN handshake.
+            scope.launch(Dispatchers.Main) {
+                if (state.value == CONNECTED) {
+                    notification.updateNotification(
+                        if (hasUpperVpn) "Android VPN detected" else null,
+                        "Root TUN " + (currentProto?.label ?: "AWG"), state.value)
+                }
+            }
         }
     }
 
