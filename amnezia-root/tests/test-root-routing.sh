@@ -68,10 +68,13 @@ grep -q '^20550:' "$MOCK_RULES"
 grep -q '^20551:' "$MOCK_RULES"
 grep -q 'iptables -t nat -I OUTPUT 1 -j AMN_ROOT_DNS' "$MOCK_LOG"
 
-# Stop removes only our owned RPDB priorities, leaving unrelated rules.
+# Stop removes our owned RPDB priorities, including old-version UID rules.
 echo '12000: system VPN rule' >> "$MOCK_RULES"
+echo '5000: stale Amnezia old-UID rule' >> "$MOCK_RULES"
+echo '5001: stale Amnezia old-UID rule' >> "$MOCK_RULES"
 sh "$ROUTES" stop 10555
 grep -q '^12000:' "$MOCK_RULES"
+! grep -Eq '^500[01]:' "$MOCK_RULES"
 ! grep -Eq '^(12550|12551|20550|20551|27550|27551):' "$MOCK_RULES"
 
 # Fail closed on third-party collision rather than deleting another rule.
