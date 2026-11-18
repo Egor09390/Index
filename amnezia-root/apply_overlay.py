@@ -18,7 +18,7 @@ def edit(root: Path, relative: str, old: str, new: str, expected: int = 1) -> No
     file.write_text(content.replace(old, new), encoding="utf-8")
 
 
-def apply(root: Path, helper: Path) -> None:
+def apply(root: Path, helper: Path, ksu_helper: Path) -> None:
     here = Path(__file__).resolve().parent
     overlay = here / "overlay"
     for original in overlay.rglob("*"):
@@ -31,6 +31,13 @@ def apply(root: Path, helper: Path) -> None:
     assets.mkdir(parents=True, exist_ok=True)
     shutil.copy2(here / "root-routing.sh", assets / "amnezia-root-routing.sh")
     shutil.copy2(helper, assets / "amnezia-root-tun-arm64")
+
+    # The app Gradle module explicitly maps main jniLibs to client/android/libs.
+    # The executable must be extracted into nativeLibraryDir; Android forbids
+    # running native binaries directly from writable app data on modern OSes.
+    native_libs = root / "client/android/libs/arm64-v8a"
+    native_libs.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ksu_helper, native_libs / "libamnezia_ksu_root.so")
 
     activity = "client/android/src/org/amnezia/vpn/AmneziaActivity.kt"
     edit(root, activity, 'Intent(this, proto.serviceClass)',
@@ -209,5 +216,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("upstream", type=Path)
     parser.add_argument("--helper", required=True, type=Path)
+    parser.add_argument("--ksu-helper", required=True, type=Path)
     args = parser.parse_args()
-    apply(args.upstream.resolve(), args.helper.resolve())
+    apply(args.upstream.resolve(), args.helper.resolve(), args.ksu_helper.resolve())
