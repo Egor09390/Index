@@ -108,8 +108,9 @@ take over as the active system VPN.
 The current underlay rules are designed for modern Android:
 
 - `12550/12551`: only fwmark `0x20000/0x20000` (*protectedFromVpn*) from
-  UIDs other than Amnezia, returning the VPN provider's encrypted transport
-  to AWG.
+  **application UIDs**, excluding Amnezia's UID and Android system DNS
+  resolver UIDs. This returns an upper VPN provider's transport to AWG
+  without hijacking netd's own protected DNS sockets.
 - `20550/20551`: ordinary app traffic when no second Android VPN is active.
 - `27550/27551`: fallback for traffic after Android VPN rules.
   In stacking mode, 20550/20551 are removed so the **upper** VPN's VpnService
