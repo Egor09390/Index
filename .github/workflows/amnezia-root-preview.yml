@@ -39,6 +39,11 @@ jobs:
         run: |
           python3 -m py_compile amnezia-root/apply_overlay.py
           sh -n amnezia-root/root-routing.sh
+          sh -n amnezia-root/tests/test-root-routing.sh
+          sh amnezia-root/tests/test-root-routing.sh
+          grep -q 'fwmark "$PROTECT_MARK"' amnezia-root/root-routing.sh
+          grep -q 'TRANSPORT_VPN' amnezia-root/overlay/client/android/src/org/amnezia/vpn/RootAwgService.kt
+          grep -q 'NET_CAPABILITY_NOT_VPN' amnezia-root/overlay/client/android/src/org/amnezia/vpn/RootAwgService.kt
           python3 amnezia-root/apply_overlay.py upstream \
             --helper amnezia-root-tun-arm64 --ksu-helper libamnezia_ksu_root.so
           test -s upstream/client/android/assets/amnezia-root-tun-arm64
@@ -56,7 +61,7 @@ jobs:
             amnezia-root/README.md amnezia-root/apply_overlay.py \
             amnezia-root/root-tun-fd.c amnezia-root/ksu-root-exec.c \
             amnezia-root/root-routing.sh \
-            amnezia-root/overlay
+            amnezia-root/tests amnezia-root/overlay
           sha256sum amnezia-root-source-preview.tar.gz > SHA256SUMS
       - name: Publish source-only prerelease
         env:
@@ -167,4 +172,4 @@ jobs:
           gh release upload "amnezia-root-source-${{ github.run_number }}" \
             AmneziaVPN-Root-Only-arm64-preview.apk APK-SHA256SUMS --clobber
           gh release edit "amnezia-root-source-${{ github.run_number }}" \
-            --notes "Experimental root-only ARM64 AWG. Authorized KernelSU Samsung v2.2 native GRANT_ROOT path for DFRoot late-load if su is hidden. No VpnService. Not device-tested; double VPN unverified."
+            --notes "Experimental root-only ARM64 AWG and WireGuard underlay. Android second-VPN network auto-detection + protected transport fwmark routing and standard Android VPN priority. KernelSU Samsung native root launcher. No VpnService in Amnezia. Routing mock tests pass; real two-VPN device testing still required. IPv6/other protocols not yet supported."
