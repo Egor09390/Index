@@ -63,11 +63,11 @@ is_ipv4() {
   for n in "$@"; do [ "$n" -le 255 ] || return 1; done
 }
 
-# With no Android VpnService present, priority 20550 must route ordinary
-# sockets through AWG ahead of Android's implicit physical-network rules.
-# When a second VPN is present, remove 20550/20551 so Android's VPN rules
-# can win. The protected VPN provider sockets still use our 12550/12551
-# rules, allowing VPN-over-AWG without a platform VPN slot for Amnezia.
+# Before the upper VPN exists, 20550/20551 route ordinary sockets over AWG.
+# When upper Android VpnService starts, REMOVE ALL unprotected AWG rules.
+# Android may use VPN priority 13000, 24000, 27000, or 29000 (netd/ROM).
+# Only upper VPN *protected* transport sockets remain routed through AWG
+# by 12550/12551. The root-only Amnezia app does not occupy VpnService.
 sync_layered() {
   ip -4 route show table "$TABLE" | grep -q "default dev $IFACE" || {
     echo "Root AWG route not installed; refusing layer switch" >&2
@@ -75,15 +75,11 @@ sync_layered() {
   }
   case "$ACTION" in
     vpn-on)
-      # Fallback rules must be present before removing the early ones.
-      ip -4 rule show | grep -Eq "^[[:space:]]*${P_FALLBACK_LOW}:" || {
-        echo "Root AWG fallback route missing; refusing to bypass early rules" >&2
-        exit 1
-      }
-      ip -4 rule show | grep -Eq "^[[:space:]]*${P_FALLBACK_HIGH}:" || {
-        echo "Root AWG fallback route missing; refusing to bypass early rules" >&2
-        exit 1
-      }
+      # Never leave the old 27550 fallback behind. Android may select the
+      # active VPN at priority 27000-31000, so that fallback caused a
+      # blackhole/bypass for some Samsung VpnService implementations.
+      ip -4 rule del pref "$P_FALLBACK_LOW" lookup "$TABLE" 2>/dev/null || :
+      ip -4 rule del pref "$P_FALLBACK_HIGH" lookup "$TABLE" 2>/dev/null || :
       ip -4 rule del pref "$P_EARLY_LOW" lookup "$TABLE" 2>/dev/null || :
       ip -4 rule del pref "$P_EARLY_HIGH" lookup "$TABLE" 2>/dev/null || :
       # Let Android's second-VPN DNS take priority over the AWG DNS rewrite.
@@ -135,8 +131,12 @@ case "$ACTION" in
     ip addr replace "$ADDRESS" dev "$IFACE"
     ip link set dev "$IFACE" mtu 1280 up
 
-    # Fail closed for IPv6 until a real IPv6 underlay implementation exists.
+    # IPv6 cannot travel in the lower IPv4-only AWG underlay. However an
+    # upper Android VpnService must be able to carry IPv6 in its tun* device;
+    # rejecting *all* non-Amnezia IPv6 in OUTPUT broke dual-stack VPNs.
+    # Only the tunnel interface is allowed; physical IPv6 still fails closed.
     ip6tables -N "$V6_CHAIN"
+    ip6tables -A "$V6_CHAIN" -o 'tun+' -j RETURN
     ip6tables -A "$V6_CHAIN" -m owner ! --uid-owner "$UID_VALUE" -j REJECT
     ip6tables -I OUTPUT 1 -j "$V6_CHAIN"
 
@@ -154,10 +154,9 @@ case "$ACTION" in
     fi
     ip -4 rule add pref "$P_PROTECTED_HIGH" fwmark "$PROTECT_MARK" uidrange "$UID_ABOVE"-4294967294 lookup "$TABLE"
 
-    # After Android's VPN rules, provide fallback for explicitly excluded UIDs.
-    # These do not override an established second VPN's routing policy.
-    ip -4 rule add pref "$P_FALLBACK_LOW" uidrange 0-"$UID_BELOW" lookup "$TABLE"
-    ip -4 rule add pref "$P_FALLBACK_HIGH" uidrange "$UID_ABOVE"-4294967294 lookup "$TABLE"
+    # No unrestricted fallback: Android's upper VPN may be implemented as
+    # a UID-default network (priority 29000) or use a bypassable VPN (27000).
+    # Either must take precedence over AWG for ordinary application sockets.
 
     # While there is no second VPN, Android uses implicit physical fwmarks.
     # Intercept before that point; remove these two rules on VPN onAvailable.
