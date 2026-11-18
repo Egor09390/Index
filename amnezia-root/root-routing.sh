@@ -143,7 +143,12 @@ case "$ACTION" in
     # avoids the prior 'lookup main' problem on Android.
     # Protected sockets of the second VPN must use AWG even though netd
     # marks them as bypassing Android's VpnService. This is the underlay.
-    ip -4 rule add pref "$P_PROTECTED_LOW" fwmark "$PROTECT_MARK" uidrange 0-"$UID_BELOW" lookup "$TABLE"
+    # Only Android application UIDs may be upper-VPN providers. Excluding
+    # system UIDs matters: netd/DnsResolver also use protected fwmarks,
+    # and redirecting those would break the upper VPN's DNS network.
+    if [ "$UID_BELOW" -ge 10000 ]; then
+      ip -4 rule add pref "$P_PROTECTED_LOW" fwmark "$PROTECT_MARK" uidrange 10000-"$UID_BELOW" lookup "$TABLE"
+    fi
     ip -4 rule add pref "$P_PROTECTED_HIGH" fwmark "$PROTECT_MARK" uidrange "$UID_ABOVE"-4294967294 lookup "$TABLE"
 
     # After Android's VPN rules, provide fallback for explicitly excluded UIDs.
