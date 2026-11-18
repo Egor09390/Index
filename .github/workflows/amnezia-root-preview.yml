@@ -43,7 +43,7 @@ jobs:
           sh amnezia-root/tests/test-root-routing.sh
           grep -q 'fwmark "$PROTECT_MARK"' amnezia-root/root-routing.sh
           grep -q 'TRANSPORT_VPN' amnezia-root/overlay/client/android/src/org/amnezia/vpn/RootAwgService.kt
-          grep -q 'NET_CAPABILITY_NOT_VPN' amnezia-root/overlay/client/android/src/org/amnezia/vpn/RootAwgService.kt
+          grep -q 'clearCapabilities()' amnezia-root/overlay/client/android/src/org/amnezia/vpn/RootAwgService.kt
           python3 amnezia-root/apply_overlay.py upstream \
             --helper amnezia-root-tun-arm64 --ksu-helper libamnezia_ksu_root.so
           test -s upstream/client/android/assets/amnezia-root-tun-arm64
