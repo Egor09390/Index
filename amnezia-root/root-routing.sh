@@ -36,12 +36,6 @@ cleanup() {
               "$P_FALLBACK_LOW" "$P_FALLBACK_HIGH"; do
     ip -4 rule del pref "$pref" lookup "$TABLE" 2>/dev/null || :
   done
-  # Partially-created rules may exist after a failed start; retry removals.
-  for pref in "$P_PROTECTED_LOW" "$P_PROTECTED_HIGH" \
-              "$P_EARLY_LOW" "$P_EARLY_HIGH" \
-              "$P_FALLBACK_LOW" "$P_FALLBACK_HIGH"; do
-    ip -4 rule del pref "$pref" lookup "$TABLE" 2>/dev/null || :
-  done
   iptables -t nat -D OUTPUT -j "$DNS_CHAIN" 2>/dev/null || :
   iptables -t nat -F "$DNS_CHAIN" 2>/dev/null || :
   iptables -t nat -X "$DNS_CHAIN" 2>/dev/null || :
