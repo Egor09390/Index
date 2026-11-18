@@ -21,11 +21,13 @@ modify the unrelated Windows Lightscreen project on `main`.
   priorities 20550/20551 carry ordinary traffic over AWG. Once Android
   announces a VPN `NetworkCapabilities.TRANSPORT_VPN`, these early rules
   are removed so Android can route app traffic into the second VPN. The
-  27550/27551 fallback remains, and rollback restores the early rules
-  when the upper VPN disappears. None of this requires a user toggle.
+  27550/27551 fallback is removed as well, so Android VPNs with UID-default
+  routing (priority 29000) cannot be bypassed. When the upper VPN disappears,
+  the early AWG rules are restored. No user toggle is required.
 - Regular DNS requests are redirected only when the upper VPN is absent.
-  Protected transport DNS is never rewritten. IPv6 is currently blocked
-  to avoid leaking out of the IPv4-only AWG tunnel.
+  Protected transport DNS is never rewritten. IPv6 is blocked from
+  physical interfaces; the upper VpnService's tun* interface can carry IPv6
+  through its own tunnel. The lower AWG underlay is still IPv4-only.
 - UID-excluding IPv4 policy routing, managed DNS OUTPUT chain, IPv6 leak
   blocking and root-only rollback. Every start failure invokes cleanup.
 - On disconnect/service destruction, cleans our IP rules, iptables chains,
@@ -42,7 +44,7 @@ A passing build or mocked test is **not** evidence of working double VPN
 on a physical Samsung Galaxy. Please verify both VPN handshakes and
 the browser's public IP after enabling the second VPN. Kernel/ROM netd
 priorities and VPN implementations vary; apps without an IPv4-capable
-server can fail because this preview deliberately blocks IPv6.
+server can fail because the lower AWG is IPv4-only.
 Test on a backed-up rooted ARM64 phone; do not treat this as production-ready.
 
 ## Upstream source changed by overlay
@@ -112,9 +114,11 @@ The current underlay rules are designed for modern Android:
   resolver UIDs. This returns an upper VPN provider's transport to AWG
   without hijacking netd's own protected DNS sockets.
 - `20550/20551`: ordinary app traffic when no second Android VPN is active.
-- `27550/27551`: fallback for traffic after Android VPN rules.
-  In stacking mode, 20550/20551 are removed so the **upper** VPN's VpnService
-  owns ordinary app traffic, while AWG still handles its transport.
+- `27550/27551`: deliberately **absent**. An older prototype left these
+  rules active and hijacked Android's UID-default VPN rule (priority 29000),
+  making browsing fail when the second VPN was enabled.
+  In stacked mode, 20550/20551 are also removed so the **upper** VpnService
+  owns ordinary application traffic. Only protected provider sockets use AWG.
 
 The service watches VPN transport networks and updates these rules automatically.
 A second VPN must still be able to reach its own endpoint using IPv4;
