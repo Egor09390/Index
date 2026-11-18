@@ -101,13 +101,14 @@ def apply(root: Path, helper: Path) -> None:
     fun startRootVpn(json: JSONObject) {
         check(tunnelHandle == -1) { "Tunnel already running" }
         val parsed = parseConfig(json)
-        val data = json.getJSONObject(
-            if (json.has("awg_config_data")) "awg_config_data" else "wireguard_config_data"
-        )
-        val cidr = data.getString("client_ip").split(",")
-            .map { it.trim() }.firstOrNull { it.contains(".") && it.contains("/") }
-            ?: throw VpnStartException("Root mode requires an IPv4 client address")
-        val dns = json.optString("dns1", "").trim()
+        // Reuse addresses parsed by upstream Wireguard/Awg. They support
+        // bare client_ip values (e.g. 10.8.1.2) and normalize to /32.
+        // The previous root-only code incorrectly required '/' in the raw JSON.
+        val cidr = parsed.addresses.firstOrNull { it.isIpv4 }?.toString()
+            ?: throw VpnStartException("Root TUN needs an IPv4 address in the AWG configuration")
+        val dns = parsed.dnsServers.firstOrNull {
+            it is java.net.Inet4Address
+        }?.hostAddress.orEmpty()
         RootTun.prepare(context)
         RootTun.cleanup(context, strict = true)
         try {
