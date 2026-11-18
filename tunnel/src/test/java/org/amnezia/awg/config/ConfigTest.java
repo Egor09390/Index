@@ -64,9 +64,11 @@ public class ConfigTest {
                         + "PublicKey = vBN7qyUTb5lJtWYJ8LhbPio1Z4RcyBPGnqFBGn6O6Qg=\n"
                         + "PersistentKeepalive = 25-35\n");
 
-        assertEquals(config, parseText(config.toAwgQuickString()));
-        assertEquals("25-35", config.getPeers().get(0).getPersistentKeepalive().orElse(""));
-        final String userspace = config.toAwgUserspaceString();
+        final String exported = config.toAwgQuickString();
+        final Config restored = parseText(exported);
+        assertEquals(exported, restored.toAwgQuickString());
+        assertEquals("25-35", restored.getPeers().get(0).getPersistentKeepalive().orElse(""));
+        final String userspace = restored.toAwgUserspaceString();
         assertTrue(userspace.contains("header_protection_key="
                 + config.getInterface().getHeaderProtectionKey().get().toHex() + "\n"));
         assertTrue(userspace.contains("content_padding_addition=2-4\n"));
@@ -75,8 +77,8 @@ public class ConfigTest {
         assertTrue(userspace.contains("reject_after_time=170-180\n"));
         assertTrue(userspace.contains("keepalive_timeout=10-15\n"));
         assertTrue(userspace.contains("max_handshake_attempts=15-20\n"));
-        assertTrue(userspace.contains("random_trailers=true\n"));
-        assertTrue(userspace.contains("disable_cookies=false\n"));
+        assertTrue(userspace.contains("random_trailers=1\n"));
+        assertTrue(userspace.contains("disable_cookies=0\n"));
         assertTrue(userspace.contains("persistent_keepalive_interval=25-35\n"));
     }
 
