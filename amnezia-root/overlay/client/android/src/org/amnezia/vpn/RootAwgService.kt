@@ -173,7 +173,7 @@ class RootAwgService : Service() {
         if (data.isBlank()) return
         connection = scope.launch(Dispatchers.IO) {
             try {
-                RootMode.requireRoot()
+                RootMode.requireRoot(applicationContext)
                 val obj = JSONObject(data)
                 val proto = VpnProto.get(obj.getString("protocol"))
                 require(proto == VpnProto.AWG || proto == VpnProto.WIREGUARD) {
