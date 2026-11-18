@@ -25,14 +25,17 @@ jobs:
           submodules: recursive
       - uses: actions/setup-java@v5
         with:
-          distribution: jetbrains
+          distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v5
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platforms;android-35 build-tools;35.0.0 cmake;3.22.1 ndk;26.1.10909125'
       - name: Test config parsing and assemble APKs
-        run: ./gradlew --no-daemon :tunnel:testDebugUnitTest :ui:assembleRelease
+        run: |
+          # Use Java 21 from setup-java instead of provisioning a second JDK.
+          mv gradle/gradle-daemon-jvm.properties "$RUNNER_TEMP/gradle-daemon-jvm.properties"
+          ./gradlew --no-daemon :tunnel:testDebugUnitTest :ui:assembleRelease
       - name: Sign and verify APKs
         id: sign
         shell: bash
