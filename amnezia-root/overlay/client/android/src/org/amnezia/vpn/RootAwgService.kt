@@ -72,6 +72,8 @@ class RootAwgService : Service() {
             delay(250)
             try {
                 syncStackedRouting()
+            } catch (_: CancellationException) {
+                // Service is shutting down; this is not a route failure.
             } catch (e: Exception) {
                 onError("VPN-over-AWG routing update: " + (e.message ?: "unknown error"))
             }
