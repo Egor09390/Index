@@ -137,6 +137,19 @@ object RootTun {
         root(context, "sh '" + script + "' refresh " + uid(context))
     }
 
+    /**
+     * Android VpnService providers protect their UDP/TCP transport sockets.
+     * Keep those protected sockets under AWG while allowing ordinary app
+     * packets to use Android's native second-VPN routing table.
+     *
+     * Mode is derived from Android's VPN network callbacks, never a UI toggle.
+     */
+    fun setStacked(context: Context, otherVpnActive: Boolean) {
+        val script = installed(ROUTE_ASSET, context)
+        val action = if (otherVpnActive) "vpn-on" else "vpn-off"
+        root(context, "sh '" + script + "' " + action + " " + uid(context))
+    }
+
     fun installRouting(context: Context, clientIpv4: String, dnsIpv4: String) {
         // No untrusted values are permitted to reach su's shell.
         require(clientIpv4.matches(Regex("[0-9./]+"))) { "Expected IPv4 CIDR" }
