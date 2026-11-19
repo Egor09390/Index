@@ -10,6 +10,8 @@ Swipe up on **FULL** to share the full transcript as a `.txt` file. Use this opt
 
 Go to **Actions** to see builds, and **Releases** to download a successful APK. Gboard reads the Android system clipboard, but it can decide how long to keep entries.
 
+With Gboard selected, the terminal defaults to character-based input so Gboard can show its recent clipboard suggestion above the keyboard. In Gboard, enable **Show recently copied text and images in suggestions bar** for the shortcut. An explicit `enforce-char-based-input` value in `termux.properties` takes precedence.
+
 Tap the round ivory button at the upper left to open the sessions menu. Press and hold a session, then tap **Delete** in the light dialog to close the session and remove it from the list. Tap outside the button to dismiss the dialog.
 
 **ABI target:** only `arm64-v8a` is enabled in the patched app/build.gradle; universal, arm32, x86 and x86_64 outputs are disabled. Intended for 64-bit ARM devices such as Galaxy S23. The existing Termux app on the phone cannot be updated with this build if Android rejects its different APK signing certificate. Installing this build does not transfer root access or data automatically.

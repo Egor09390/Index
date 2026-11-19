@@ -158,6 +158,59 @@ index bd78914..ccfdafa 100644
          int size = service.getTermuxSessionsSize();
          if (size == 0) {
              // There are no sessions to show, so finish the activity.
+diff --git a/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java b/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
+index 700c5e5..00418d6 100644
+--- a/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
++++ b/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
+@@ -4,9 +4,11 @@ import android.annotation.SuppressLint;
+ import android.app.AlertDialog;
+ import android.content.ClipData;
+ import android.content.ClipboardManager;
++import android.content.ComponentName;
+ import android.content.Context;
+ import android.media.AudioManager;
+ import android.os.Environment;
++import android.provider.Settings;
+ import android.text.TextUtils;
+ import android.view.Gravity;
+ import android.view.InputDevice;
+@@ -32,6 +34,7 @@ import com.termux.shared.activities.ReportActivity;
+ import com.termux.shared.models.ReportInfo;
+ import com.termux.app.models.UserAction;
+ import com.termux.app.terminal.io.KeyboardShortcut;
++import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
+ import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
+ import com.termux.shared.data.DataUtils;
+ import com.termux.shared.logger.Logger;
+@@ -55,6 +58,8 @@ import androidx.drawerlayout.widget.DrawerLayout;
+ 
+ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+ 
++    private static final String GBOARD_PACKAGE = "com.google.android.inputmethod.latin";
++
+     final TermuxActivity mActivity;
+ 
+     final TermuxTerminalSessionActivityClient mTermuxTerminalSessionActivityClient;
+@@ -213,7 +218,18 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+ 
+     @Override
+     public boolean shouldEnforceCharBasedInput() {
+-        return mActivity.getProperties().isEnforcingCharBasedInput();
++        TermuxAppSharedProperties properties = mActivity.getProperties();
++        boolean enforceCharBasedInput = properties.isEnforcingCharBasedInput();
++        if (enforceCharBasedInput || properties.getPropertyValue(
++                TermuxPropertyConstants.KEY_ENFORCE_CHAR_BASED_INPUT, null, true) != null) {
++            return enforceCharBasedInput;
++        }
++
++        // Gboard can show clipboard suggestions in this mode, unlike in the usual TYPE_NULL mode.
++        String inputMethodId = Settings.Secure.getString(
++            mActivity.getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD);
++        ComponentName inputMethod = inputMethodId == null ? null : ComponentName.unflattenFromString(inputMethodId);
++        return inputMethod != null && GBOARD_PACKAGE.equals(inputMethod.getPackageName());
+     }
+ 
+     @Override
 diff --git a/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java b/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java
 new file mode 100644
 index 0000000..e4ea567
@@ -414,7 +467,7 @@ index a38e8cb..c5642aa 100644
  }
 diff --git a/app/src/main/res/drawable/ic_open_sessions_drawer.xml b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
 new file mode 100644
-index 0000000..5dad23f
+index 0000000..fc9377f
 --- /dev/null
 +++ b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
 @@ -0,0 +1,15 @@
@@ -426,7 +479,7 @@ index 0000000..5dad23f
 +    android:viewportHeight="48">
 +
 +    <path
-+        android:fillColor="@color/session_surface"
++        android:fillColor="@color/session_arrow_surface"
 +        android:pathData="M24,4a20,20 0,1 1,0 40a20,20 0,1 1,0 -40Z" />
 +
 +    <path
@@ -527,13 +580,14 @@ index 0000000..3418b94
 +    android:textColor="#212121"
 +    android:textSize="16sp" />
 diff --git a/app/src/main/res/values/colors.xml b/app/src/main/res/values/colors.xml
-index 045e125..393684b 100644
+index 045e125..58ba42d 100644
 --- a/app/src/main/res/values/colors.xml
 +++ b/app/src/main/res/values/colors.xml
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
  <?xml version="1.0" encoding="utf-8"?>
  <resources>
 +    <color name="session_surface">#ECE8DF</color>
++    <color name="session_arrow_surface">#D4CDC1</color>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
 index cbd2992..c40a4ae 100644

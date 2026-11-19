@@ -52,5 +52,5 @@ jobs:
           gh release create "$tag" termux-src/app/build/outputs/apk/debug/*_arm64-v8a.apk \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Termux COPY/FULL ARM64-v8a build ${{ github.run_number }}" \
-            --notes "Unofficial Android 7+ arm64-v8a debug APK. FULL copies long transcripts in order, up to 19,000 UTF-16 units per press. Paste each part before tapping FULL again. Swipe up on FULL to share the full .txt file. COPY filters output from the most recent pasted commands. The round ivory arrow opens the sessions menu, where holding a session shows Delete. Different APK signatures may prevent installing over an existing Termux." \
+            --notes "Unofficial Android 7+ arm64-v8a debug APK. Termux uses character-based input by default with Gboard so its clipboard suggestion can appear above the keys. The sessions arrow has a muted ivory background. FULL copies long transcripts in order, up to 19,000 UTF-16 units per press. Swipe up on FULL to share the full .txt file. Different APK signatures may prevent installing over an existing Termux." \
             --prerelease
