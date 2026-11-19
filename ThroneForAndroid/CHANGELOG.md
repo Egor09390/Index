@@ -1,9 +1,7 @@
 #### 2.0.7-quality.1
 
 * Add a sequential connection quality test for the current group.
-* Show the saved score from 1 to 100 in red on each profile card.
-* Score HTTPS availability and response times, WebSocket echo, and SSE delivery.
-* Use a separate Android package so the build can be installed alongside upstream Throne.
+* Save a red score from 1 to 100 on each profile card.
 
 #### 2.0.7
 
