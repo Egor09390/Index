@@ -1,0 +1,747 @@
+diff --git a/.github/workflows/connection-quality.yml b/.github/workflows/connection-quality.yml
+new file mode 100644
+index 0000000..286f858
+--- /dev/null
++++ b/.github/workflows/connection-quality.yml
+@@ -0,0 +1,38 @@
++name: Connection quality prerelease
++
++on:
++  push:
++    branches: [throne-connection-quality]
++    paths:
++      - nb4a.properties
++      - .github/workflows/connection-quality.yml
++
++permissions:
++  contents: write
++
++jobs:
++  release:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - uses: ./.github/actions/android-build
++        with:
++          tasks: app:testOssDebugUnitTest app:assembleOssDebug
++          channel: preview
++          build-number: '1'
++      - name: Publish APKs as a prerelease
++        env:
++          GH_TOKEN: ${{ github.token }}
++        run: |
++          set -euo pipefail
++          version=$(sed -n 's/^VERSION_NAME=//p' nb4a.properties)
++          tag="v$version"
++          if gh release view "$tag" >/dev/null 2>&1; then
++            exit 0
++          fi
++          mkdir dist
++          cp app/build/outputs/apk/oss/debug/*.apk dist/
++          (cd dist && sha256sum *.apk > SHA256SUMS)
++          bash buildScript/release_notes.sh "$version" > "$RUNNER_TEMP/quality-release.md"
++          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
++          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 6460f87..7acd6a7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,10 @@
++#### 2.0.7-quality.1
++
++* Add a sequential connection quality test for the current group.
++* Show the saved score from 1 to 100 in red on each profile card.
++* Score HTTPS availability and response times, WebSocket echo, and SSE delivery.
++* Use a separate Android package so the build can be installed alongside upstream Throne.
++
+ #### 2.0.7
+ 
+ * Add Service check **1**
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
+new file mode 100644
+index 0000000..cf4c61d
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
+@@ -0,0 +1,26 @@
++package io.nekohasekai.sagernet.bg.test
++
++import kotlin.math.roundToInt
++
++/** HTTPS round trips are grouped by destination so natural differences between sites do not count as jitter. */
++internal object ConnectionQuality {
++    fun score(https: List<List<Long?>>, streaming: List<Boolean>): Int {
++        val attempts = https.flatten()
++        val received = attempts.count { it != null }
++        if (received == 0 && streaming.none { it }) return 1
++
++        val availability = 60.0 * received / attempts.size
++        val streams = 20.0 * streaming.count { it } / streaming.size
++        val responsiveness = https.map { samples ->
++            val times = samples.filterNotNull().sorted()
++            if (times.size < 2) return@map 0.0
++            val slowest = times.last()
++            val spread = slowest - times.first()
++            points(slowest, 150, 1_500) + points(spread, 40, 500)
++        }.average()
++        return (availability + streams + responsiveness).roundToInt().coerceIn(1, 100)
++    }
++
++    private fun points(millis: Long, best: Long, worst: Long): Double =
++        10.0 * ((worst - millis).toDouble() / (worst - best)).coerceIn(0.0, 1.0)
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
+new file mode 100644
+index 0000000..0d2b6f2
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
+@@ -0,0 +1,187 @@
++package io.nekohasekai.sagernet.bg.test
++
++import android.os.SystemClock
++import io.nekohasekai.sagernet.bg.CoreRuntime
++import io.nekohasekai.sagernet.bg.proto.CoreConfig
++import io.nekohasekai.sagernet.bg.proto.CoreConfigs
++import io.nekohasekai.sagernet.bg.proto.toStartOptions
++import io.nekohasekai.sagernet.database.ProxyEntity
++import io.nekohasekai.sagernet.ktx.Logs
++import io.nekohasekai.sagernet.outbound.config.PortLease
++import io.nekohasekai.sagernet.outbound.json.JsonInput
++import io.nekohasekai.sagernet.outbound.json.JsonObject
++import io.nekohasekai.sagernet.outbound.json.JsonArray
++import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
++import io.throneproj.mobile.Mobile
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.withTimeoutOrNull
++import okhttp3.Credentials
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import okhttp3.Response
++import okhttp3.WebSocket
++import okhttp3.WebSocketListener
++import java.io.IOException
++import java.net.InetSocketAddress
++import java.net.Proxy
++import java.util.UUID
++import java.util.concurrent.TimeUnit
++
++/** Measures only one saved profile at a time. The probe box's authenticated loopback inlet has an explicit exit. */
++internal class QualityTestRunner(private val session: TestSession) {
++    suspend fun run(profiles: List<ProxyEntity>) {
++        for (profile in profiles) {
++            if (session.cancelled) break
++            val score = try {
++                measure(profile)
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                Logs.w(e)
++                // The profile could not produce a usable test connection.
++                1
++            }
++            if (!session.cancelled) session.reportQuality(profile, score)
++        }
++    }
++
++    private suspend fun measure(profile: ProxyEntity): Int {
++        val ports = PortLease()
++        try {
++            val generated = CoreConfigs.buildTest(listOf(profile.id), ports)
++            if (!generated.ok || generated.skipped.containsKey(profile.id)) return 1
++            session.ensureSharedXrayAssets(generated.xrayConfig)
++            for (config in generated.xrayFullConfigs) session.ensureSharedXrayAssets(config)
++            if (session.cancelled) return 1
++
++            val fullConfig = generated.fullConfigs[profile.id]
++            val core = if (fullConfig == null) CoreConfig.from(generated) else CoreConfig(fullConfig)
++            val config = JsonInput.parseObject(core.coreConfig)
++            val route = config["route"] as? JsonObject ?: JsonObject().also { config["route"] = it }
++            val exit = generated.outboundTags.singleOrNull() ?: defaultExit(config, route) ?: return 1
++
++            val port = ports.reserve(1).single()
++            if (port == 0) return 1
++            val password = UUID.randomUUID().toString()
++            val inbounds = config.array("inbounds")
++            inbounds.add(
++                jsonObjectOf(
++                    "type" to "http", "tag" to PROBE_INBOUND, "listen" to LOOPBACK, "listen_port" to port,
++                    "users" to JsonArray().add(jsonObjectOf("username" to PROBE_USER, "password" to password)),
++                ),
++            )
++            config["inbounds"] = inbounds
++            val rules = JsonArray().add(jsonObjectOf("inbound" to PROBE_INBOUND, "action" to "route", "outbound" to exit))
++            for (rule in route.array("rules")) rules.add(rule)
++            route["rules"] = rules
++
++            val instance = Mobile.newInstance(CoreRuntime.platform, core.copy(coreConfig = config.toCompact()).toStartOptions())
++            try {
++                instance.start()
++                return probe(port, password)
++            } finally {
++                runCatching { instance.close() }.onFailure { Logs.w(it) }
++            }
++        } finally {
++            ports.close()
++        }
++    }
++
++    private fun defaultExit(config: JsonObject, route: JsonObject): String? =
++        route.string("final").takeIf { it.isNotBlank() }
++            ?: (config.array("outbounds").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
++            ?: (config.array("endpoints").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
++
++    private suspend fun probe(port: Int, password: String): Int {
++        val credential = Credentials.basic(PROBE_USER, password)
++        val client = OkHttpClient.Builder()
++            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port)))
++            .proxyAuthenticator { _, response ->
++                if (response.request.header("Proxy-Authorization") != null) null
++                else response.request.newBuilder().header("Proxy-Authorization", credential).build()
++            }
++            .retryOnConnectionFailure(false)
++            .followRedirects(false)
++            .callTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
++            .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
++            .build()
++        try {
++            val https = HTTPS_SITES.map { url -> List(3) { if (session.cancelled) null else httpsTime(client, url) } }
++            val ws = !session.cancelled && webSocketEcho(client)
++            val sse = !session.cancelled && eventStream(client)
++            return ConnectionQuality.score(https, listOf(ws, sse))
++        } finally {
++            client.dispatcher.cancelAll()
++            client.connectionPool.evictAll()
++            client.dispatcher.executorService.shutdown()
++        }
++    }
++
++    private fun httpsTime(client: OkHttpClient, url: String): Long? = try {
++        val start = SystemClock.elapsedRealtime()
++        client.newCall(Request.Builder().url(url).header("Cache-Control", "no-cache").build()).execute().use {
++            if (it.code == 204) SystemClock.elapsedRealtime() - start else null
++        }
++    } catch (_: IOException) {
++        null
++    }
++
++    private suspend fun webSocketEcho(client: OkHttpClient): Boolean {
++        val answer = CompletableDeferred<Boolean>()
++        val challenge = UUID.randomUUID().toString()
++        val socket = client.newWebSocket(Request.Builder().url("wss://echo.websocket.org").build(), object : WebSocketListener() {
++            override fun onOpen(webSocket: WebSocket, response: Response) {
++                if (!webSocket.send(challenge)) answer.complete(false)
++            }
++
++            override fun onMessage(webSocket: WebSocket, text: String) {
++                if (text == challenge) answer.complete(true)
++            }
++
++            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
++                answer.complete(false)
++            }
++
++            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
++                answer.complete(false)
++            }
++        })
++        return try {
++            withTimeoutOrNull(TIMEOUT_MS) { answer.await() } == true
++        } finally {
++            socket.cancel()
++        }
++    }
++
++    private fun eventStream(client: OkHttpClient): Boolean {
++        return try {
++            val request = Request.Builder().url("https://echo.websocket.org/.sse")
++                .header("Accept", "text/event-stream").build()
++            client.newCall(request).execute().use { response ->
++                val body = response.body ?: return false
++                if (!response.isSuccessful || !response.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
++                    return false
++                }
++                val source = body.source()
++                var hasData = false
++                repeat(24) {
++                    val line = source.readUtf8LineStrict(4096)
++                    if (line.isEmpty() && hasData) return true
++                    if (line.startsWith("data:") && line.substringAfter(':').isNotBlank()) hasData = true
++                }
++                false
++            }
++        } catch (_: IOException) {
++            false
++        }
++    }
++
++    private companion object {
++        const val TIMEOUT_MS = 5_000L
++        const val LOOPBACK = "127.0.0.1"
++        const val PROBE_USER = "quality"
++        const val PROBE_INBOUND = "throne-quality-probe"
++        val HTTPS_SITES = listOf("https://cp.cloudflare.com/generate_204", "https://www.gstatic.com/generate_204")
++    }
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt
+index 9ae069d..32fcae8 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt
+@@ -108,6 +108,7 @@ internal class TestNotification(private val session: TestSession) {
+                 TestSpec.KIND_IP -> R.string.test_engine_kind_ip
+                 TestSpec.KIND_SPEED -> R.string.test_engine_kind_speed
+                 TestSpec.KIND_SERVICE -> R.string.service_check
++                TestSpec.KIND_QUALITY -> R.string.connection_quality_test
+                 else -> R.string.test_engine_kind_url
+             }
+         )
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt
+index 6af9a5a..cd700e6 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt
+@@ -125,7 +125,7 @@ internal class TestSession(
+     /** TestRunner.cpp: kept sorts move once the run is over, so rows do not jump while results stream in. */
+     private fun repositionTested() {
+         // the running connection's URL and IP results are shown, never stored; no sort reads a service check
+-        if (spec.testCurrent && kind != TestSpec.KIND_SPEED || kind == TestSpec.KIND_SERVICE) return
++        if (spec.testCurrent && kind != TestSpec.KIND_SPEED || kind == TestSpec.KIND_SERVICE || kind == TestSpec.KIND_QUALITY) return
+         val changed = tested.values.groupBy({ it.groupId }, { it.id })
+         GroupSort.repositionLater(changed, SortInput.TEST_RESULT)
+         // A speed test also credits the traffic it moved.
+@@ -186,6 +186,7 @@ internal class TestSession(
+             TestSpec.KIND_IP -> IpTestRunner(this).run(profiles)
+             TestSpec.KIND_SPEED -> SpeedTestRunner(this).run(profiles)
+             TestSpec.KIND_SERVICE -> ServiceTestRunner(this).runChecks(profiles)
++            TestSpec.KIND_QUALITY -> QualityTestRunner(this).run(profiles)
+         }
+     }
+ 
+@@ -296,6 +297,17 @@ internal class TestSession(
+         }
+     }
+ 
++    fun reportQuality(profile: ProxyEntity, score: Int) {
++        val saved = try {
++            SagerDatabase.proxyDao.updateQualityScore(profile.id, profile.outboundJson, score) > 0
++        } catch (e: SQLException) {
++            Logs.w(e)
++            false
++        }
++        counted(saved, false)
++        notifyClient { it.onServiceResult(profile.id, if (saved) "" else ERROR_ABORTED) }
++    }
++
+     /** applyServiceResult (TestRunner.cpp:232-242): an aborted check stores nothing and keeps the previous one. */
+     fun reportService(results: List<ProbeResult>) {
+         persist(results) { if (it.service.isNotEmpty()) ProfileManager.saveServiceResult(it.profileId, it.service) }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSpec.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSpec.kt
+index 9cfc731..b9b2579 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSpec.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSpec.kt
+@@ -37,6 +37,7 @@ data class TestSpec(
+ 
+         /** The service availability checks (runServiceChecks): never automatic, the menus ask first. */
+         const val KIND_SERVICE = 3
++        const val KIND_QUALITY = 4
+ 
+         /** kMaxServiceCheckProfiles: every profile sends about 20 requests to third-party services. */
+         const val SERVICE_MAX_PROFILES = 100
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
+index 9eebe31..bf95b02 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
+@@ -66,6 +66,7 @@ data class ProxyEntity(
+     @ColumnInfo(name = "test_error") var testError: String? = null,
+     /** The desktop's `service_checks`: the results of the per-service reachability checks. */
+     @ColumnInfo(name = "service_checks", defaultValue = "") var serviceChecks: String = "",
++    @ColumnInfo(name = "quality_score", defaultValue = "0") var qualityScore: Int = 0,
+ ) : Parcelable {
+ 
+     @IgnoredOnParcel
+@@ -349,7 +350,7 @@ data class ProxyEntity(
+         @Query(
+             "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
+                 "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
+-                "NULL AS `test_error`, '' AS `service_checks` FROM `profiles` WHERE `gid` = :groupId"
++                "NULL AS `test_error`, '' AS `service_checks`, `quality_score` FROM `profiles` WHERE `gid` = :groupId"
+         )
+         fun getWithoutDataByGroup(groupId: Long): List<ProxyEntity>
+ 
+@@ -357,7 +358,7 @@ data class ProxyEntity(
+         @Query(
+             "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
+                 "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
+-                "NULL AS `test_error`, '' AS `service_checks` FROM `profiles` WHERE `id` IN (:proxyIds)"
++                "NULL AS `test_error`, '' AS `service_checks`, `quality_score` FROM `profiles` WHERE `id` IN (:proxyIds)"
+         )
+         fun getWithoutData(proxyIds: List<Long>): List<ProxyEntity>
+ 
+@@ -397,7 +398,7 @@ data class ProxyEntity(
+         fun setGroup(proxyId: Long, groupId: Long, order: Long)
+ 
+         /** New data for a profile in place (subscription update, resolved address): test results and traffic stay. */
+-        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson WHERE `id` = :proxyId")
++        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson, `quality_score` = CASE WHEN `outbound_json` = :outboundJson THEN `quality_score` ELSE 0 END WHERE `id` = :proxyId")
+         fun updateOutbound(proxyId: Long, type: String, name: String?, outboundJson: String): Int
+ 
+         @Query("UPDATE `profiles` SET `traffic_dl` = :rx, `traffic_up` = :tx WHERE `id` = :proxyId")
+@@ -432,20 +433,23 @@ data class ProxyEntity(
+         )
+         fun updateLatency(proxyId: Long, latency: Int, latencyAt: Long, testError: String?): Int
+ 
++        @Query("UPDATE `profiles` SET `quality_score` = :score WHERE `id` = :id AND `outbound_json` = :outboundJson")
++        fun updateQualityScore(id: Long, outboundJson: String, score: Int): Int
++
+         /** TestRunner::applyServiceResult: the `service_checks` document alone. */
+         @Query("UPDATE `profiles` SET `service_checks` = :document WHERE `id` = :proxyId")
+         fun updateServiceChecks(proxyId: Long, document: String): Int
+ 
+         @Query(
+             "UPDATE `profiles` SET `latency` = 0, `latency_at` = 0, `dl_speed` = NULL, `ul_speed` = NULL, " +
+-                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '' " +
++                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0 " +
+                 "WHERE `id` IN (:profileIds)"
+         )
+         fun clearTestResults(profileIds: List<Long>): Int
+ 
+         @Query(
+             "UPDATE `profiles` SET `latency` = 0, `latency_at` = 0, `dl_speed` = NULL, `ul_speed` = NULL, " +
+-                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '' " +
++                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0 " +
+                 "WHERE `gid` = :groupId"
+         )
+         fun clearGroupTestResults(groupId: Long): Int
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt b/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt
+index 9d0d649..150ee35 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt
+@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
+         ProxyGroup::class, ProxyEntity::class, RouteProfileEntity::class, RouteRuleEntity::class,
+         SettingEntry::class, MarkerEntity::class,
+     ],
+-    version = 20,
++    version = 21,
+     autoMigrations = [
+         AutoMigration(from = 8, to = 9),
+         AutoMigration(from = 12, to = 13),
+@@ -201,7 +201,7 @@ abstract class SagerDatabase : RoomDatabase() {
+         private fun buildProfileDatabase(): SagerDatabase =
+             Room.databaseBuilder(SagerNet.application, SagerDatabase::class.java, Key.DB_PROFILE)
+                 .addMigrations(
+-                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
++                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
+                 )
+                 .addCallback(callback)
+                 // both processes use the file: WAL lets readers in either one run while the other writes
+@@ -214,6 +214,12 @@ abstract class SagerDatabase : RoomDatabase() {
+                 .build()
+ 
+         // Failures are logged with android.util.Log: Logs reads the log level from the settings in this database.
++        val MIGRATION_20_21: Migration = object : Migration(20, 21) {
++            override fun migrate(db: SupportSQLiteDatabase) {
++                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `quality_score` INTEGER NOT NULL DEFAULT 0")
++            }
++        }
++
+         val instance by lazy {
+             SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
+             val db = buildProfileDatabase()
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
+index d4944bf..5917bfe 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
+@@ -125,6 +125,7 @@ class GroupMenu(private val host: ConfigurationFragment) {
+             R.id.action_test_ip -> ProfileTests.startGroup(host, TestSpec.KIND_IP, id)
+             R.id.action_test_speed -> ProfileTests.startGroup(host, TestSpec.KIND_SPEED, id)
+             R.id.action_test_service -> ProfileTests.startServiceGroup(host, id)
++            R.id.action_test_quality -> ProfileTests.startGroup(host, TestSpec.KIND_QUALITY, id)
+             R.id.action_clear_test_results -> GroupActions.clearTestResults(host, group)
+             R.id.action_remove_duplicates -> GroupActions.removeDuplicates(host, id)
+             R.id.action_remove_unavailable -> GroupActions.removeUnavailable(host, id)
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
+index 85acd8c..3543b24 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
+@@ -235,6 +235,7 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+     private val moreButton: View = view.findViewById(R.id.more)
+     private val address: TextView = view.findViewById(R.id.profile_address)
+     private val result: TextView = view.findViewById(R.id.profile_result)
++    private val qualityScore: TextView = view.findViewById(R.id.quality_score)
+     private val testProgress: View = view.findViewById(R.id.test_progress)
+     private val type: TextView = view.findViewById(R.id.profile_type)
+     private val traffic: TextView = view.findViewById(R.id.traffic_text)
+@@ -308,6 +309,10 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+         result.contentDescription = content.resultDescription
+         result.alpha = if (content.resultDimmed) 0.5f else 1f
+         result.isVisible = content.result.isNotEmpty()
++        qualityScore.isVisible = profile.qualityScore in 1..100
++        qualityScore.text = if (qualityScore.isVisible) {
++            itemView.context.getString(R.string.connection_quality_score, profile.qualityScore)
++        } else ""
+         testProgress.isVisible = content.testing
+         traffic.text = content.traffic
+         traffic.contentDescription = content.trafficDescription
+@@ -332,7 +337,7 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+         placeholder = true
+         name.text = ""
+         type.text = ""
+-        for (view in arrayOf(address, result, testProgress, traffic, error, selectCheck, editButton, shareButton, moreButton, pinIcon)) {
++        for (view in arrayOf(address, result, qualityScore, testProgress, traffic, error, selectCheck, editButton, shareButton, moreButton, pinIcon)) {
+             view.isVisible = false
+         }
+         applyCardColors(selected = false, checked = false)
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/TypeLineLayout.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/TypeLineLayout.kt
+index c7d6f21..e7a0bb6 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/TypeLineLayout.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/TypeLineLayout.kt
+@@ -28,6 +28,7 @@ class TypeLineLayout @JvmOverloads constructor(
+     private lateinit var progress: View
+     private lateinit var result: TextView
+     private lateinit var traffic: TextView
++    private lateinit var score: TextView
+ 
+     /** The last measure kept the result beside the type; else its own line is [resultLineHeight] tall. */
+     private var inline = true
+@@ -39,6 +40,7 @@ class TypeLineLayout @JvmOverloads constructor(
+         progress = findViewById(R.id.test_progress)
+         result = findViewById(R.id.profile_result)
+         traffic = findViewById(R.id.traffic_text)
++        score = findViewById(R.id.quality_score)
+     }
+ 
+     override fun shouldDelayChildPressedState() = false
+@@ -52,28 +54,30 @@ class TypeLineLayout @JvmOverloads constructor(
+         fun upTo(size: Int) =
+             if (bounded) MeasureSpec.makeMeasureSpec(size.coerceAtLeast(0), MeasureSpec.AT_MOST) else free
+ 
+-        type.measure(upTo(content), free)
+-        if (!traffic.isGone) traffic.measure(upTo(content - type.measuredWidth - gap), free)
++        if (!score.isGone) score.measure(upTo(content), free)
++        val remaining = content - scoreWidth()
++        type.measure(upTo(remaining), free)
++        if (!traffic.isGone) traffic.measure(upTo(remaining - type.measuredWidth - gap), free)
+         if (!progress.isGone) progress.measure(free, free)
+         if (!result.isGone) result.measure(free, free)
+         val trafficWidth = if (traffic.isGone) 0 else gap + traffic.measuredWidth
+         val resultWidth = resultWidth()
+-        inline = resultWidth == 0 || type.measuredWidth + gap + resultWidth + trafficWidth <= content
++        inline = resultWidth == 0 || type.measuredWidth + gap + resultWidth + trafficWidth <= remaining
+ 
+         val width: Int
+         val height: Int
+         if (inline) {
+             resultLineHeight = 0
+             width = type.measuredWidth + (if (resultWidth > 0) gap + resultWidth else 0) + trafficWidth
+-            height = max(textHeight(type, result, traffic), heightOf(progress))
++            height = max(textHeight(type, result, traffic, score), heightOf(progress))
+         } else {
+             if (!result.isGone) result.measure(upTo(content - leadWidth()), free)
+             resultLineHeight = max(heightOf(progress), heightOf(result))
+-            width = max(resultWidth(), type.measuredWidth + trafficWidth)
+-            height = resultLineHeight + lineGap + textHeight(type, traffic)
++            width = max(resultWidth() - scoreWidth(), type.measuredWidth + trafficWidth)
++            height = resultLineHeight + lineGap + textHeight(type, traffic, score)
+         }
+         setMeasuredDimension(
+-            resolveSize(width + paddingLeft + paddingRight, widthMeasureSpec),
++            resolveSize(width + scoreWidth() + paddingLeft + paddingRight, widthMeasureSpec),
+             resolveSize(height + paddingTop + paddingBottom, heightMeasureSpec),
+         )
+     }
+@@ -94,7 +98,7 @@ class TypeLineLayout @JvmOverloads constructor(
+         if (!progress.isGone) place(progress, resultX, paddingTop + (resultHeight - progress.measuredHeight) / 2)
+         if (!result.isGone) {
+             val offset = if (inline) {
+-                textTop(result, resultHeight, type, result, traffic)
++                textTop(result, resultHeight, type, result, traffic, score)
+             } else {
+                 (resultHeight - result.measuredHeight) / 2
+             }
+@@ -103,12 +107,16 @@ class TypeLineLayout @JvmOverloads constructor(
+ 
+         val lineTop = if (inline) paddingTop else paddingTop + resultLineHeight + lineGap
+         val lineHeight = if (inline) contentHeight else contentHeight - resultLineHeight - lineGap
+-        val line = if (inline) arrayOf(type, result, traffic) else arrayOf(type, traffic)
++        val line = if (inline) arrayOf(type, result, traffic, score) else arrayOf(type, traffic, score)
+         place(type, 0, lineTop + textTop(type, lineHeight, *line))
+         if (!traffic.isGone) {
+-            val x = end - paddingLeft - traffic.measuredWidth
++            val x = end - paddingLeft - traffic.measuredWidth - scoreWidth()
+             place(traffic, x, lineTop + textTop(traffic, lineHeight, *line))
+         }
++        if (!score.isGone) {
++            val x = end - paddingLeft - score.measuredWidth
++            place(score, x, lineTop + textTop(score, lineHeight, *line))
++        }
+     }
+ 
+     /** The spinner and its gap before the result text. */
+@@ -117,6 +125,8 @@ class TypeLineLayout @JvmOverloads constructor(
+ 
+     private fun resultWidth() = leadWidth() + if (result.isGone) 0 else result.measuredWidth
+ 
++    private fun scoreWidth() = if (score.isGone) 0 else score.measuredWidth + gap
++
+     private fun heightOf(view: View) = if (view.isGone) 0 else view.measuredHeight
+ 
+     /** The height of the shown [views] on one baseline: emoji make a text taller than its neighbours. */
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt
+index 6862508..ee0f18a 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt
+@@ -78,6 +78,7 @@ internal object TestFormat {
+             TestSpec.KIND_IP -> R.string.test_panel_kind_ip
+             TestSpec.KIND_SPEED -> R.string.test_panel_kind_speed
+             TestSpec.KIND_SERVICE -> R.string.service_check
++            TestSpec.KIND_QUALITY -> R.string.connection_quality_test
+             else -> R.string.test_panel_kind_url
+         }
+     )
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt
+index 93068cf..08e6c59 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt
+@@ -748,6 +748,7 @@ class TestPanelController(
+         } else {
+             context.getString(R.string.test_panel_summary_tested, tested, elapsed)
+         }
++        if (s.kind == TestSpec.KIND_QUALITY) return head
+         val tail = when {
+             s.kind == TestSpec.KIND_IP -> if (s.ok > 0) {
+                 context.getString(R.string.test_panel_summary_resolved, s.ok, s.countries.size)
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestSessionModel.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestSessionModel.kt
+index d3fca47..50a761b 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestSessionModel.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestSessionModel.kt
+@@ -109,7 +109,11 @@ internal class TestSessionModel(
+     private val batched: Boolean
+         get() = !testCurrent && (kind != TestSpec.KIND_SPEED || speedMode == TestUiState.SPEED_MODE_COUNTRY)
+ 
+-    private val batch = if (kind == TestSpec.KIND_SERVICE) ServiceTestRunner.SERVICE_BATCH_SIZE else BATCH
++    private val batch = when (kind) {
++        TestSpec.KIND_SERVICE -> ServiceTestRunner.SERVICE_BATCH_SIZE
++        TestSpec.KIND_QUALITY -> 1
++        else -> BATCH
++    }
+ 
+     fun setIds(ids: LongArray) {
+         order = ids.distinct().toLongArray()
+@@ -439,7 +443,7 @@ internal class TestSessionModel(
+                 countriesDirty = true
+             }
+         }
+-        if (row.ok && kind != TestSpec.KIND_IP && kind != TestSpec.KIND_SERVICE) {
++        if (row.ok && kind != TestSpec.KIND_IP && kind != TestSpec.KIND_SERVICE && kind != TestSpec.KIND_QUALITY) {
+             working[id] = RankedResult(
+                 profileId = id,
+                 latency = row.latency,
+diff --git a/app/src/main/res/layout/layout_profile.xml b/app/src/main/res/layout/layout_profile.xml
+index 95423dd..6edd62b 100644
+--- a/app/src/main/res/layout/layout_profile.xml
++++ b/app/src/main/res/layout/layout_profile.xml
+@@ -195,6 +195,17 @@
+                     android:textColor="?android:attr/textColorSecondary"
+                     tools:text="19 kB↑ 35 kB↓" />
+ 
++                <TextView
++                    android:id="@+id/quality_score"
++                    android:layout_width="wrap_content"
++                    android:layout_height="wrap_content"
++                    android:singleLine="true"
++                    android:textAppearance="?android:attr/textAppearanceSmall"
++                    android:textColor="@color/connection_quality_red"
++                    android:textStyle="bold"
++                    android:visibility="gone"
++                    tools:text="67/100" />
++
+             </io.nekohasekai.sagernet.ui.profiles.TypeLineLayout>
+ 
+             <TextView
+diff --git a/app/src/main/res/layout/layout_profile_compact.xml b/app/src/main/res/layout/layout_profile_compact.xml
+index 6c9119e..5f35cdb 100644
+--- a/app/src/main/res/layout/layout_profile_compact.xml
++++ b/app/src/main/res/layout/layout_profile_compact.xml
+@@ -93,6 +93,18 @@
+                 tools:text="🇩🇪 135 ms"
+                 tools:visibility="visible" />
+ 
++            <TextView
++                android:id="@+id/quality_score"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_marginStart="8dp"
++                android:singleLine="true"
++                android:textAppearance="?android:attr/textAppearanceSmall"
++                android:textColor="@color/connection_quality_red"
++                android:textStyle="bold"
++                android:visibility="gone"
++                tools:text="67/100" />
++
+             <androidx.appcompat.widget.AppCompatImageView
+                 android:id="@+id/edit"
+                 android:layout_width="wrap_content"
+diff --git a/app/src/main/res/menu/add_profile_menu.xml b/app/src/main/res/menu/add_profile_menu.xml
+index 064444a..2e10de3 100644
+--- a/app/src/main/res/menu/add_profile_menu.xml
++++ b/app/src/main/res/menu/add_profile_menu.xml
+@@ -146,6 +146,9 @@
+                             <item
+                                 android:id="@+id/action_test_service"
+                                 android:title="@string/service_check" />
++                            <item
++                                android:id="@+id/action_test_quality"
++                                android:title="@string/connection_quality_test" />
+                             <item
+                                 android:id="@+id/action_test_stop"
+                                 android:title="@string/profiles_test_stop"
+diff --git a/app/src/main/res/values-night/connection_quality.xml b/app/src/main/res/values-night/connection_quality.xml
+new file mode 100644
+index 0000000..4929964
+--- /dev/null
++++ b/app/src/main/res/values-night/connection_quality.xml
+@@ -0,0 +1,3 @@
++<resources>
++    <color name="connection_quality_red">#FF8278</color>
++</resources>
+diff --git a/app/src/main/res/values-ru/strings.xml b/app/src/main/res/values-ru/strings.xml
+index 9cdeb91..50d673b 100644
+--- a/app/src/main/res/values-ru/strings.xml
++++ b/app/src/main/res/values-ru/strings.xml
+@@ -2861,4 +2861,5 @@
+     <string name="autosel_notice_exhausted_upstream">Все запущенные профили перестали работать через звенья перед ним — пересборка со следующими кандидатами.</string>
+     <string name="validation_route_outbound_chain_selector">Правила маршрутизации не могут использовать цепочку «%1$s»: в ней есть автовыбор, поэтому её можно только запустить. Выберите другой исходящий.</string>
+     <string name="route_outbound_chain_selector">Профиль маршрутизации направляет трафик в %1$s, где есть автовыбор; такую цепочку можно только запустить, но не использовать в правилах маршрутизации</string>
++    <string name="connection_quality_test">Качество соединения</string>
+ </resources>
+diff --git a/app/src/main/res/values/connection_quality.xml b/app/src/main/res/values/connection_quality.xml
+new file mode 100644
+index 0000000..4e214b0
+--- /dev/null
++++ b/app/src/main/res/values/connection_quality.xml
+@@ -0,0 +1,3 @@
++<resources>
++    <color name="connection_quality_red">#B3261E</color>
++</resources>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 8b6872e..a7a0a26 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -3007,4 +3007,6 @@
+     <string name="autosel_notice_exhausted_upstream">Every running profile stopped working through the hops in front of it — rebuilding with the next candidates.</string>
+     <string name="validation_route_outbound_chain_selector">Routing rules cannot use the chain \"%1$s\": it holds an auto selector, so it can only be started. Pick another outbound.</string>
+     <string name="route_outbound_chain_selector">The routing profile sends traffic to %1$s, which holds an auto selector; such a chain can only be started, not used in routing rules</string>
++    <string name="connection_quality_test">Connection quality</string>
++    <string name="connection_quality_score" translatable="false">%1$d/100</string>
+ </resources>
+diff --git a/nb4a.properties b/nb4a.properties
+index 751051e..88163a7 100644
+--- a/nb4a.properties
++++ b/nb4a.properties
+@@ -1,4 +1,4 @@
+-PACKAGE_NAME=com.nb4a.throne
+-VERSION_NAME=2.0.7
+-VERSION_CODE=113
++PACKAGE_NAME=com.nb4a.throne.quality
++VERSION_NAME=2.0.7-quality.1
++VERSION_CODE=114
+ THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
+\ No newline at end of file
