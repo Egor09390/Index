@@ -34,6 +34,130 @@ index 1d0dfe1..f42e2ec 100644
  
          <receiver
              android:name=".app.TermuxOpenReceiver"
+diff --git a/app/src/main/java/com/termux/app/TermuxActivity.java b/app/src/main/java/com/termux/app/TermuxActivity.java
+index 0c9f741..250cf0b 100644
+--- a/app/src/main/java/com/termux/app/TermuxActivity.java
++++ b/app/src/main/java/com/termux/app/TermuxActivity.java
+@@ -245,6 +245,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+ 
+         setTerminalToolbarView(savedInstanceState);
+ 
++        findViewById(R.id.open_sessions_drawer_button).setOnClickListener(v ->
++            getDrawer().openDrawer(findViewById(R.id.left_drawer)));
++
+         setSettingsButtonView();
+ 
+         setNewSessionButtonView();
+diff --git a/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java b/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java
+index bf914b9..ada1a76 100644
+--- a/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java
++++ b/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java
+@@ -1,6 +1,7 @@
+ package com.termux.app.terminal;
+ 
+ import android.annotation.SuppressLint;
++import android.app.Dialog;
+ import android.graphics.Color;
+ import android.graphics.Paint;
+ import android.graphics.Typeface;
+@@ -11,6 +12,7 @@ import android.text.style.StyleSpan;
+ import android.view.LayoutInflater;
+ import android.view.View;
+ import android.view.ViewGroup;
++import android.view.Window;
+ import android.widget.AdapterView;
+ import android.widget.ArrayAdapter;
+ import android.widget.TextView;
+@@ -23,6 +25,7 @@ import com.termux.app.TermuxActivity;
+ import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
+ import com.termux.shared.theme.NightMode;
+ import com.termux.shared.theme.ThemeUtils;
++import com.termux.shared.view.ViewUtils;
+ import com.termux.terminal.TerminalSession;
+ 
+ import java.util.List;
+@@ -101,8 +104,21 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
+ 
+     @Override
+     public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+-        final TermuxSession selectedSession = getItem(position);
+-        mActivity.getTermuxTerminalSessionClient().renameSession(selectedSession.getTerminalSession());
++        TermuxSession selectedSession = getItem(position);
++        if (selectedSession == null) return false;
++
++        Dialog dialog = new Dialog(mActivity, R.style.TermuxAlertDialogStyle);
++        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
++        dialog.setContentView(R.layout.dialog_delete_session);
++        dialog.setCanceledOnTouchOutside(true);
++        dialog.findViewById(R.id.delete_session_button).setOnClickListener(button -> {
++            dialog.dismiss();
++            mActivity.getTermuxTerminalSessionClient().deleteSession(selectedSession.getTerminalSession());
++        });
++        Window window = dialog.getWindow();
++        window.setBackgroundDrawableResource(android.R.color.transparent);
++        window.setLayout(Math.round(ViewUtils.dpToPx(mActivity, 144)), ViewGroup.LayoutParams.WRAP_CONTENT);
++        dialog.show();
+         return true;
+     }
+ 
+diff --git a/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java b/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java
+index bd78914..ccfdafa 100644
+--- a/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java
++++ b/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java
+@@ -146,6 +146,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+         }
+ 
+         int index = service.getIndexOfSession(finishedSession);
++        if (index < 0) return;
+ 
+         // For plugin commands that expect the result back, we should immediately close the session
+         // and send the result back instead of waiting fo the user to press enter.
+@@ -160,9 +161,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+ 
+         if (mActivity.isVisible() && finishedSession != mActivity.getCurrentSession()) {
+             // Show toast for non-current sessions that exit.
+-            // Verify that session was not removed before we got told about it finishing:
+-            if (index >= 0)
+-                mActivity.showToast(toToastTitle(finishedSession) + " - exited", true);
++            mActivity.showToast(toToastTitle(finishedSession) + " - exited", true);
+         }
+ 
+         if (mActivity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
+@@ -436,7 +435,34 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+         if (service == null) return;
+ 
+         int index = service.removeTermuxSession(finishedSession);
++        if (index >= 0) selectSessionAfterRemoval(service, index);
++    }
++
++    void deleteSession(TerminalSession sessionToDelete) {
++        TermuxService service = mActivity.getTermuxService();
++        if (service == null) return;
++
++        int index = service.getIndexOfSession(sessionToDelete);
++        TermuxSession termuxSession = service.getTermuxSession(index);
++        if (termuxSession == null) return;
++
++        if (sessionToDelete.isRunning()) {
++            termuxSession.killIfExecuting(service, true);
++        } else {
++            service.removeTermuxSession(sessionToDelete);
++        }
++
++        if (service.getIndexOfSession(sessionToDelete) >= 0) return;
++
++        TerminalSession currentSession = mActivity.getCurrentSession();
++        if (sessionToDelete == currentSession || service.getTermuxSessionsSize() == 0) {
++            selectSessionAfterRemoval(service, index);
++        } else {
++            checkAndScrollToSession(currentSession);
++        }
++    }
+ 
++    private void selectSessionAfterRemoval(TermuxService service, int index) {
+         int size = service.getTermuxSessionsSize();
+         if (size == 0) {
+             // There are no sessions to show, so finish the activity.
 diff --git a/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java
 new file mode 100644
 index 0000000..ed38ea8
@@ -213,11 +337,136 @@ index a38e8cb..8ad42ec 100644
 +    }
 +
  }
+diff --git a/app/src/main/res/drawable/ic_open_sessions_drawer.xml b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
+new file mode 100644
+index 0000000..d216cfd
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="48dp"
++    android:height="48dp"
++    android:viewportWidth="48"
++    android:viewportHeight="48">
++
++    <path
++        android:fillColor="@android:color/white"
++        android:pathData="M24,4a20,20 0,1 1,0 40a20,20 0,1 1,0 -40Z" />
++
++    <path
++        android:fillColor="@android:color/black"
++        android:pathData="M15,23h14.17l-5.59,-5.59L25,16l8,8l-8,8l-1.42,-1.41L29.17,25H15Z" />
++</vector>
+diff --git a/app/src/main/res/drawable/session_delete_button_background.xml b/app/src/main/res/drawable/session_delete_button_background.xml
+new file mode 100644
+index 0000000..2e0074c
+--- /dev/null
++++ b/app/src/main/res/drawable/session_delete_button_background.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<ripple xmlns:android="http://schemas.android.com/apk/res/android"
++    android:color="#1F000000">
++    <item>
++        <shape android:shape="rectangle">
++            <solid android:color="@android:color/white" />
++            <corners android:radius="4dp" />
++        </shape>
++    </item>
++</ripple>
+diff --git a/app/src/main/res/layout/activity_termux.xml b/app/src/main/res/layout/activity_termux.xml
+index 831ea7c..65a49db 100644
+--- a/app/src/main/res/layout/activity_termux.xml
++++ b/app/src/main/res/layout/activity_termux.xml
+@@ -23,27 +23,47 @@
+             android:layout_above="@+id/terminal_toolbar_view_pager"
+             android:layout_height="match_parent">
+ 
+-            <com.termux.view.TerminalView
+-                android:id="@+id/terminal_view"
++            <LinearLayout
+                 android:layout_width="match_parent"
+                 android:layout_height="match_parent"
+-                android:defaultFocusHighlightEnabled="false"
+-                android:focusableInTouchMode="true"
+-                android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
+-                android:scrollbars="vertical"
+-                tools:ignore="UnusedAttribute" />
++                android:orientation="vertical">
++
++                <ImageButton
++                    android:id="@+id/open_sessions_drawer_button"
++                    android:layout_width="48dp"
++                    android:layout_height="48dp"
++                    android:layout_gravity="left"
++                    android:background="@null"
++                    android:contentDescription="@string/action_open_sessions_drawer"
++                    android:foreground="?attr/selectableItemBackgroundBorderless"
++                    android:padding="0dp"
++                    android:src="@drawable/ic_open_sessions_drawer"
++                    tools:ignore="RtlHardcoded" />
++
++                <com.termux.view.TerminalView
++                    android:id="@+id/terminal_view"
++                    android:layout_width="match_parent"
++                    android:layout_height="0dp"
++                    android:layout_weight="1"
++                    android:defaultFocusHighlightEnabled="false"
++                    android:focusableInTouchMode="true"
++                    android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
++                    android:scrollbars="vertical"
++                    tools:ignore="UnusedAttribute" />
++            </LinearLayout>
+ 
+             <LinearLayout
+                 android:id="@+id/left_drawer"
+                 android:layout_width="240dp"
+                 android:layout_height="match_parent"
+-                android:layout_gravity="start"
++                android:layout_gravity="left"
+                 android:choiceMode="singleChoice"
+                 android:divider="@android:color/transparent"
+                 android:dividerHeight="0dp"
+                 android:descendantFocusability="blocksDescendants"
+                 android:orientation="vertical"
+-                android:background="?attr/termuxActivityDrawerBackground">
++                android:background="?attr/termuxActivityDrawerBackground"
++                tools:ignore="RtlHardcoded">
+ 
+                 <LinearLayout
+                     android:layout_width="match_parent"
+diff --git a/app/src/main/res/layout/dialog_delete_session.xml b/app/src/main/res/layout/dialog_delete_session.xml
+new file mode 100644
+index 0000000..f3b7792
+--- /dev/null
++++ b/app/src/main/res/layout/dialog_delete_session.xml
+@@ -0,0 +1,12 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Button xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/delete_session_button"
++    style="?android:attr/borderlessButtonStyle"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:background="@drawable/session_delete_button_background"
++    android:minHeight="56dp"
++    android:text="@string/action_delete_session"
++    android:textAllCaps="false"
++    android:textColor="#212121"
++    android:textSize="16sp" />
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cbd2992..bcc5f31 100644
+index cbd2992..b5974c3 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -68,6 +68,9 @@
+@@ -42,6 +42,8 @@
+ 
+ 
+     <!-- Terminal Sidebar and Shortcuts -->
++    <string name="action_open_sessions_drawer">Open sessions menu</string>
++    <string name="action_delete_session">Delete</string>
+     <string name="action_new_session">New session</string>
+     <string name="action_new_session_failsafe">Failsafe</string>
+     <string name="title_max_terminals_reached">Max terminals reached</string>
+@@ -68,6 +70,9 @@
      <string name="action_share_transcript">Share transcript</string>
      <string name="title_share_transcript">Terminal transcript</string>
      <string name="title_share_transcript_with">Send transcript to:</string>
@@ -301,6 +550,21 @@ index 5e943ab..6a4e059 100644
          // First: Always remove escape key and C1 control characters [0x80,0x9F]:
          text = text.replaceAll("(\u001B|[\u0080-\u009F])", "");
          // Second: Replace all newlines (\n) or CRLF (\r\n) with carriage returns (\r).
+diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java
+index caea870..40d8ffc 100644
+--- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java
++++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java
+@@ -232,8 +232,8 @@ public final class TerminalSession extends TerminalOutput {
+     }
+ 
+     /** Finish this terminal session by sending SIGKILL to the shell. */
+-    public void finishIfRunning() {
+-        if (isRunning()) {
++    public synchronized void finishIfRunning() {
++        if (mShellPid > 0) {
+             try {
+                 Os.kill(mShellPid, OsConstants.SIGKILL);
+             } catch (ErrnoException e) {
 diff --git a/terminal-view/src/main/java/com/termux/view/TerminalView.java b/terminal-view/src/main/java/com/termux/view/TerminalView.java
 index f4f82ad..e3f387c 100644
 --- a/terminal-view/src/main/java/com/termux/view/TerminalView.java
