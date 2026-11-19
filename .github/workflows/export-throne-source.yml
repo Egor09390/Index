@@ -1,0 +1,31 @@
+name: Store Throne Android source
+on:
+  push:
+    branches: [throne-connection-quality]
+    paths: [.github/workflows/export-throne-source.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Write the full patched source to the dedicated branch
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ThroneForAndroid-base"
+          git init -q "$src"
+          git -C "$src" fetch --depth 1 https://github.com/throneproj/ThroneForAndroid.git 0f3c1ca18e8af5b437d95aa0b0f36d1d5eedab51
+          git -C "$src" switch --detach FETCH_HEAD
+          git -C "$src" apply "$GITHUB_WORKSPACE/Throne-connection-quality.patch"
+          git -C "$src" add -A
+          tree=$(git -C "$src" write-tree)
+          mkdir ThroneForAndroid
+          git -C "$src" archive "$tree" | tar -x -C ThroneForAndroid
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ThroneForAndroid
+          git commit -m 'Add complete Throne for Android v2.0.7-quality.1 source'
+          git push origin HEAD:refs/heads/throne-connection-quality
