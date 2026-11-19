@@ -32,7 +32,7 @@ jobs:
           TERMUX_APK_VERSION_TAG: copy-keys-${{ github.run_number }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew :terminal-emulator:testDebugUnitTest --tests com.termux.terminal.HistoryTest assembleDebug --no-daemon
           set -euo pipefail
           ls -lh app/build/outputs/apk/debug/*.apk
           test "$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' | wc -l)" -eq 1
@@ -52,5 +52,5 @@ jobs:
           gh release create "$tag" termux-src/app/build/outputs/apk/debug/*_arm64-v8a.apk \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Termux COPY/FULL ARM64-v8a build ${{ github.run_number }}" \
-            --notes "Unofficial Android 7+ arm64-v8a debug APK. The toolbar has one row with CTRL, COPY, and FULL on the left. The round ivory arrow opens the sessions menu. Press and hold a session to show the light Delete dialog. FULL copies the entire retained scrollback to the Android clipboard. For long transcripts, use Paste from the destination text field. Swipe up on FULL to share a .txt file. COPY filters output from the most recent pasted commands. Different APK signatures may prevent installing over an existing Termux." \
+            --notes "Unofficial Android 7+ arm64-v8a debug APK. FULL copies the retained scrollback with the same line wrapping as manual selection. For long transcripts, use Paste from the destination text field or swipe up on FULL to share a .txt file. COPY filters output from the most recent pasted commands and uses the same clipboard path as FULL. The round ivory arrow opens the sessions menu, where holding a session shows Delete. Different APK signatures may prevent installing over an existing Termux." \
             --prerelease

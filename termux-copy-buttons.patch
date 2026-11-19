@@ -216,10 +216,10 @@ index 0000000..ed38ea8
 +    }
 +}
 diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
-index a38e8cb..8ad42ec 100644
+index a38e8cb..ccc73c7 100644
 --- a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
 +++ b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
-@@ -1,15 +1,23 @@
+@@ -1,12 +1,19 @@
  package com.termux.app.terminal.io;
  
  import android.annotation.SuppressLint;
@@ -239,16 +239,11 @@ index a38e8cb..8ad42ec 100644
  import com.termux.app.TermuxActivity;
  import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
  import com.termux.app.terminal.TermuxTerminalViewClient;
-+import com.termux.shared.interact.ShareUtils;
- import com.termux.shared.logger.Logger;
- import com.termux.shared.termux.extrakeys.ExtraKeysConstants;
- import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
-@@ -20,8 +28,14 @@ import com.termux.view.TerminalView;
+@@ -20,8 +27,13 @@ import com.termux.view.TerminalView;
  
  import org.json.JSONException;
  
 +import java.io.IOException;
-+import java.nio.charset.StandardCharsets;
 +
  public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
  
@@ -258,50 +253,32 @@ index a38e8cb..8ad42ec 100644
      private ExtraKeysInfo mExtraKeysInfo;
  
      final TermuxActivity mActivity;
-@@ -93,6 +107,27 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+@@ -93,6 +105,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
                  drawerLayout.closeDrawer(Gravity.LEFT);
              else
                  drawerLayout.openDrawer(Gravity.LEFT);
-+        } else if ("FULL".equals(key) || "SHARE-FULL".equals(key)) {
-+            copyOrShareTranscript("SHARE-FULL".equals(key));
-+        } else if ("COPY".equals(key)) {
-+            TerminalView tv = mActivity.getTerminalView();
-+            if (tv == null || tv.mEmulator == null) return;
-+            String copied = tv.mEmulator.getCopyLastOutput();
-+            if (copied == null || copied.isEmpty()) {
-+                mActivity.showToast("No output to copy yet", false);
-+                return;
-+            }
-+            // ClipboardManager uses size-limited Binder transactions.
-+            if (copied.getBytes(StandardCharsets.UTF_8).length > 450000) {
-+                mActivity.showToast("Output exceeds Android clipboard limit", true);
-+                return;
-+            }
-+            try {
-+                ShareUtils.copyTextToClipboard(mActivity, copied);
-+                mActivity.showToast("Copied " + copied.length() + " characters", false);
-+            } catch (RuntimeException e) {
-+                mActivity.showToast("Clipboard error: " + e.getMessage(), true);
-+            }
++        } else if ("FULL".equals(key) || "COPY".equals(key) || "SHARE-FULL".equals(key)) {
++            copyOrShareTranscript(key);
          } else if ("PASTE".equals(key)) {
              if(mTermuxTerminalSessionActivityClient != null)
                  mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
-@@ -105,4 +140,50 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+@@ -105,4 +119,51 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
          }
      }
  
-+    private void copyOrShareTranscript(boolean share) {
++    private void copyOrShareTranscript(String key) {
 +        TerminalView terminalView = mActivity.getTerminalView();
 +        if (terminalView == null || terminalView.mEmulator == null) return;
 +
-+        String text = terminalView.mEmulator.getCopyAllText();
-+        if (text.isEmpty()) {
++        String text = "COPY".equals(key) ? terminalView.mEmulator.getCopyLastOutput()
++            : terminalView.mEmulator.getCopyAllText();
++        if (text == null || text.isEmpty()) {
 +            mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
 +            return;
 +        }
 +
 +        try {
-+            if (share) {
++            if ("SHARE-FULL".equals(key)) {
 +                Uri uri = TerminalTranscriptFileProvider.writeTranscript(mActivity, text);
 +                Intent intent = new Intent(Intent.ACTION_SEND)
 +                    .setType(TerminalTranscriptFileProvider.MIME_TYPE)
@@ -461,7 +438,7 @@ index 045e125..393684b 100644
 +    <color name="session_surface">#ECE8DF</color>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cbd2992..b5974c3 100644
+index cbd2992..28a891d 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -42,6 +42,8 @@
@@ -478,7 +455,7 @@ index cbd2992..b5974c3 100644
      <string name="title_share_transcript">Terminal transcript</string>
      <string name="title_share_transcript_with">Send transcript to:</string>
 +    <string name="msg_no_terminal_transcript">No terminal output to copy</string>
-+    <string name="msg_terminal_transcript_copied">Full transcript copied. Use Paste in the text field.</string>
++    <string name="msg_terminal_transcript_copied">Transcript copied. Use Paste in the text field.</string>
 +    <string name="msg_terminal_transcript_transfer_failed">Could not copy or share the terminal transcript</string>
  
      <string name="action_share_selected_text">Share selected text</string>
@@ -494,10 +471,10 @@ index 0000000..6b70ef1
 +    <cache-path name="transcripts" path="terminal-transcripts/" />
 +</paths>
 diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
-index 5e943ab..6a4e059 100644
+index 5e943ab..1105246 100644
 --- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
 +++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
-@@ -3537,8 +3537,59 @@ public final class TerminalEmulator {
+@@ -3537,8 +3537,64 @@ public final class TerminalEmulator {
          }
      }
  
@@ -507,12 +484,17 @@ index 5e943ab..6a4e059 100644
 +
 +    public void markCopiedPaste(String text) {
 +        if (text == null || text.isEmpty()) return;
-+        mCopyPasteSnapshot = mMainBuffer.getTranscriptTextWithoutJoinedLines();
++        mCopyPasteSnapshot = getCopyAllText();
 +        mCopyPastedText = text;
 +    }
 +
 +    public String getCopyAllText() {
-+        return mMainBuffer.getTranscriptTextWithoutJoinedLines();
++        // Use the same extraction as manual selection. Drop the empty rows below the output.
++        String transcript = mMainBuffer.getSelectedText(0, -mMainBuffer.getActiveTranscriptRows(),
++            mMainBuffer.mColumns - 1, mMainBuffer.mScreenRows - 1);
++        int end = transcript.length();
++        while (end > 0 && transcript.charAt(end - 1) == '\n') end--;
++        return transcript.substring(0, end);
 +    }
 +
 +    public String getCopyLastOutput() {
@@ -572,6 +554,31 @@ index caea870..40d8ffc 100644
              try {
                  Os.kill(mShellPid, OsConstants.SIGKILL);
              } catch (ErrnoException e) {
+diff --git a/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java b/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java
+index 17f8111..7185458 100644
+--- a/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java
++++ b/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java
+@@ -30,4 +30,20 @@ public class HistoryTest extends TerminalTestCase {
+ 		enterString("LMN").assertLinesAre("111", "IJK", "LMN", "444").assertHistoryStartsWith("FGH", "CDE");
+ 	}
+ 
++	public void testFullCopyMatchesManualSelectionAcrossWrappedRows() {
++		withTerminalSized(8, 4).enterString("  abcdefghij\r\n12345678\r\nlast\r\n\r\n");
++		int historyRows = mTerminal.getScreen().getActiveTranscriptRows();
++		assertEquals(2, historyRows);
++		String expected = "  abcdefghij\n12345678\nlast";
++		assertEquals(expected, mTerminal.getSelectedText(0, -historyRows, 3, 1));
++		assertEquals(expected, mTerminal.getCopyAllText());
++	}
++
++	public void testOutputCopyFiltersWrappedCommandEcho() {
++		withTerminalSized(8, 4).enterString("$ ");
++		mTerminal.markCopiedPaste("long-command");
++		enterString("long-command\r\nlong-output\r\n$ ");
++		assertEquals("long-output", mTerminal.getCopyLastOutput());
++	}
++
+ }
 diff --git a/terminal-view/src/main/java/com/termux/view/TerminalView.java b/terminal-view/src/main/java/com/termux/view/TerminalView.java
 index f4f82ad..e3f387c 100644
 --- a/terminal-view/src/main/java/com/termux/view/TerminalView.java
