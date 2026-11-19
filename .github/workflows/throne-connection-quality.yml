@@ -1,0 +1,43 @@
+name: Throne connection quality prerelease
+on:
+  push:
+    branches: [throne-connection-quality]
+    paths:
+      - Throne-connection-quality.patch
+      - .github/workflows/throne-connection-quality.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Apply modifications to Throne v2.0.7
+        run: |
+          set -euo pipefail
+          cp Throne-connection-quality.patch "$RUNNER_TEMP/throne.patch"
+          git fetch --depth 1 https://github.com/throneproj/ThroneForAndroid.git 0f3c1ca18e8af5b437d95aa0b0f36d1d5eedab51
+          git switch --detach FETCH_HEAD
+          git apply --check "$RUNNER_TEMP/throne.patch"
+          git apply "$RUNNER_TEMP/throne.patch"
+      - uses: ./.github/actions/android-build
+        with:
+          tasks: app:testOssDebugUnitTest app:assembleOssDebug
+          channel: stable
+          build-number: '999'
+      - name: Publish APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^VERSION_NAME=//p' nb4a.properties)
+          tag="v$version"
+          mkdir -p dist
+          cp app/build/outputs/apk/oss/debug/*.apk dist/
+          (cd dist && sha256sum *.apk > SHA256SUMS)
+          bash buildScript/release_notes.sh "$version" > "$RUNNER_TEMP/release.md"
+          printf '\nThe test APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/release.md"
+          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/release.md"
