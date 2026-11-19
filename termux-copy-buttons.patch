@@ -1,24 +1,250 @@
-diff --git a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
---- a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
-+++ b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
-@@ -326,7 +326,7 @@
-     /** Defines the key for extra keys */
-     public static final String KEY_EXTRA_KEYS =  "extra-keys"; // Default: "extra-keys"
-     //public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]"; // Single row
--    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Double row
-+    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','COPY'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','FULL']]"; // Double row
+diff --git a/app/build.gradle b/app/build.gradle
+index 33c88d1..c743024 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -71,8 +71,8 @@ android {
+                 enable ((gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
+                     (gradle.startParameter.taskNames.any { it.contains("Release") } && splitAPKsForReleaseBuilds == "1"))
+                 reset ()
+-                include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
+-                universalApk true
++                include 'arm64-v8a'
++                universalApk false
+             }
+         }
+     }
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 1d0dfe1..f42e2ec 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -175,6 +175,16 @@
+             android:grantUriPermissions="true"
+             android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND" />
  
-     /** Defines the key for extra keys style */
-     public static final String KEY_EXTRA_KEYS_STYLE =  "extra-keys-style"; // Default: "extra-keys-style"
-diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
---- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
-+++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
-@@ -3537,8 +3537,59 @@
++        <provider
++            android:name=".app.terminal.io.TerminalTranscriptFileProvider"
++            android:authorities="${applicationId}.terminal-transcripts"
++            android:exported="false"
++            android:grantUriPermissions="true">
++            <meta-data
++                android:name="android.support.FILE_PROVIDER_PATHS"
++                android:resource="@xml/terminal_transcript_paths" />
++        </provider>
++
+ 
+         <receiver
+             android:name=".app.TermuxOpenReceiver"
+diff --git a/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java
+new file mode 100644
+index 0000000..ed38ea8
+--- /dev/null
++++ b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java
+@@ -0,0 +1,51 @@
++package com.termux.app.terminal.io;
++
++import android.content.ClipDescription;
++import android.content.Context;
++import android.net.Uri;
++
++import androidx.annotation.NonNull;
++import androidx.core.content.FileProvider;
++
++import java.io.BufferedWriter;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.OutputStreamWriter;
++import java.nio.charset.StandardCharsets;
++import java.util.concurrent.TimeUnit;
++
++public class TerminalTranscriptFileProvider extends FileProvider {
++
++    static final String MIME_TYPE = "text/plain";
++    private static final String CACHE_SUBDIRECTORY = "terminal-transcripts";
++
++    @Override
++    public String[] getStreamTypes(@NonNull Uri uri, @NonNull String mimeTypeFilter) {
++        return ClipDescription.compareMimeTypes(MIME_TYPE, mimeTypeFilter) ? new String[]{MIME_TYPE} : null;
++    }
++
++    static Uri writeTranscript(Context context, String text) throws IOException {
++        File directory = new File(context.getCacheDir(), CACHE_SUBDIRECTORY);
++        if (!directory.isDirectory() && !directory.mkdir() && !directory.isDirectory()) {
++            throw new IOException("Could not create transcript cache");
++        }
++
++        // Keep recent files available to apps that received a clipboard or share URI.
++        File[] expired = directory.listFiles(file ->
++            file.lastModified() < System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1));
++        if (expired != null) {
++            for (File file : expired) file.delete();
++        }
++
++        File file = File.createTempFile("termux-transcript-", ".txt", directory);
++        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
++                new FileOutputStream(file), StandardCharsets.UTF_8))) {
++            writer.write(text);
++        } catch (IOException e) {
++            file.delete();
++            throw e;
++        }
++        return getUriForFile(context, context.getPackageName() + ".terminal-transcripts", file);
++    }
++}
+diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
+index a38e8cb..8ad42ec 100644
+--- a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
++++ b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
+@@ -1,15 +1,23 @@
+ package com.termux.app.terminal.io;
+ 
+ import android.annotation.SuppressLint;
++import android.content.ClipData;
++import android.content.ClipboardManager;
++import android.content.Context;
++import android.content.Intent;
++import android.net.Uri;
++import android.os.TransactionTooLargeException;
+ import android.view.Gravity;
+ import android.view.View;
+ 
+ import androidx.annotation.NonNull;
+ import androidx.drawerlayout.widget.DrawerLayout;
+ 
++import com.termux.R;
+ import com.termux.app.TermuxActivity;
+ import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
+ import com.termux.app.terminal.TermuxTerminalViewClient;
++import com.termux.shared.interact.ShareUtils;
+ import com.termux.shared.logger.Logger;
+ import com.termux.shared.termux.extrakeys.ExtraKeysConstants;
+ import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
+@@ -20,8 +28,14 @@ import com.termux.view.TerminalView;
+ 
+ import org.json.JSONException;
+ 
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++
+ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+ 
++    // Plain text is parceled as UTF-16. Leave space in Binder's shared transaction buffer.
++    private static final int MAX_INLINE_TRANSCRIPT_LENGTH = 200_000;
++
+     private ExtraKeysInfo mExtraKeysInfo;
+ 
+     final TermuxActivity mActivity;
+@@ -93,6 +107,27 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+                 drawerLayout.closeDrawer(Gravity.LEFT);
+             else
+                 drawerLayout.openDrawer(Gravity.LEFT);
++        } else if ("FULL".equals(key) || "SHARE-FULL".equals(key)) {
++            copyOrShareTranscript("SHARE-FULL".equals(key));
++        } else if ("COPY".equals(key)) {
++            TerminalView tv = mActivity.getTerminalView();
++            if (tv == null || tv.mEmulator == null) return;
++            String copied = tv.mEmulator.getCopyLastOutput();
++            if (copied == null || copied.isEmpty()) {
++                mActivity.showToast("No output to copy yet", false);
++                return;
++            }
++            // ClipboardManager uses size-limited Binder transactions.
++            if (copied.getBytes(StandardCharsets.UTF_8).length > 450000) {
++                mActivity.showToast("Output exceeds Android clipboard limit", true);
++                return;
++            }
++            try {
++                ShareUtils.copyTextToClipboard(mActivity, copied);
++                mActivity.showToast("Copied " + copied.length() + " characters", false);
++            } catch (RuntimeException e) {
++                mActivity.showToast("Clipboard error: " + e.getMessage(), true);
++            }
+         } else if ("PASTE".equals(key)) {
+             if(mTermuxTerminalSessionActivityClient != null)
+                 mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
+@@ -105,4 +140,50 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
          }
      }
  
--    /** If DECSET 2004 is set, prefix paste with "\033[200~" and suffix with "\033[201~". */
--    public void paste(String text) {
++    private void copyOrShareTranscript(boolean share) {
++        TerminalView terminalView = mActivity.getTerminalView();
++        if (terminalView == null || terminalView.mEmulator == null) return;
++
++        String text = terminalView.mEmulator.getCopyAllText();
++        if (text.isEmpty()) {
++            mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
++            return;
++        }
++
++        try {
++            if (share) {
++                Uri uri = TerminalTranscriptFileProvider.writeTranscript(mActivity, text);
++                Intent intent = new Intent(Intent.ACTION_SEND)
++                    .setType(TerminalTranscriptFileProvider.MIME_TYPE)
++                    .putExtra(Intent.EXTRA_STREAM, uri)
++                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                mActivity.startActivity(Intent.createChooser(intent, mActivity.getString(R.string.title_share_transcript)));
++            } else {
++                copyTranscript(text);
++                mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_copied), true);
++            }
++        } catch (IOException | RuntimeException e) {
++            Logger.logStackTraceWithMessage(LOG_TAG, "Could not copy or share the transcript", e);
++            mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_transfer_failed), true);
++        }
++    }
++
++    private void copyTranscript(String text) throws IOException {
++        ClipboardManager clipboard = (ClipboardManager) mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
++        if (clipboard == null) throw new IllegalStateException("Clipboard service unavailable");
++
++        String label = mActivity.getString(R.string.title_share_transcript);
++        if (text.length() <= MAX_INLINE_TRANSCRIPT_LENGTH) {
++            try {
++                clipboard.setPrimaryClip(ClipData.newPlainText(label, text));
++                return;
++            } catch (RuntimeException e) {
++                if (!(e.getCause() instanceof TransactionTooLargeException)) throw e;
++            }
++        }
++
++        Uri uri = TerminalTranscriptFileProvider.writeTranscript(mActivity, text);
++        clipboard.setPrimaryClip(ClipData.newUri(mActivity.getContentResolver(), label, uri));
++    }
++
+ }
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index cbd2992..bcc5f31 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -68,6 +68,9 @@
+     <string name="action_share_transcript">Share transcript</string>
+     <string name="title_share_transcript">Terminal transcript</string>
+     <string name="title_share_transcript_with">Send transcript to:</string>
++    <string name="msg_no_terminal_transcript">No terminal output to copy</string>
++    <string name="msg_terminal_transcript_copied">Full transcript copied. Use Paste in the text field.</string>
++    <string name="msg_terminal_transcript_transfer_failed">Could not copy or share the terminal transcript</string>
+ 
+     <string name="action_share_selected_text">Share selected text</string>
+     <string name="title_share_selected_text">Terminal Text</string>
+diff --git a/app/src/main/res/xml/terminal_transcript_paths.xml b/app/src/main/res/xml/terminal_transcript_paths.xml
+new file mode 100644
+index 0000000..6b70ef1
+--- /dev/null
++++ b/app/src/main/res/xml/terminal_transcript_paths.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<paths>
++    <cache-path name="transcripts" path="terminal-transcripts/" />
++</paths>
+diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+index 5e943ab..6a4e059 100644
+--- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
++++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
+@@ -3537,8 +3537,59 @@ public final class TerminalEmulator {
+         }
+     }
+ 
 +    // COPY uses a transcript snapshot at paste-time; terminal output also includes tty echo.
 +    private String mCopyPasteSnapshot;
 +    private String mCopyPastedText;
@@ -69,16 +295,17 @@ diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulato
 +        return output.toString().trim();
 +    }
 +
-+    /** If DECSET 2004 is set, prefix paste with "\033[200~" and suffix with "\033[201~". */
-+    public void paste(String text) {
+     /** If DECSET 2004 is set, prefix paste with "\033[200~" and suffix with "\033[201~". */
+     public void paste(String text) {
 +        markCopiedPaste(text);
          // First: Always remove escape key and C1 control characters [0x80,0x9F]:
          text = text.replaceAll("(\u001B|[\u0080-\u009F])", "");
          // Second: Replace all newlines (\n) or CRLF (\r\n) with carriage returns (\r).
 diff --git a/terminal-view/src/main/java/com/termux/view/TerminalView.java b/terminal-view/src/main/java/com/termux/view/TerminalView.java
+index f4f82ad..e3f387c 100644
 --- a/terminal-view/src/main/java/com/termux/view/TerminalView.java
 +++ b/terminal-view/src/main/java/com/termux/view/TerminalView.java
-@@ -357,6 +357,10 @@
+@@ -357,6 +357,10 @@ public final class TerminalView extends View {
                  if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                      mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
                  }
@@ -89,46 +316,16 @@ diff --git a/terminal-view/src/main/java/com/termux/view/TerminalView.java b/ter
                  super.commitText(text, newCursorPosition);
  
                  if (mEmulator == null) return true;
-diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
---- a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
-+++ b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
-@@ -93,6 +93,25 @@
-                 drawerLayout.closeDrawer(Gravity.LEFT);
-             else
-                 drawerLayout.openDrawer(Gravity.LEFT);
-+        } else if ("COPY".equals(key) || "FULL".equals(key)) {
-+            TerminalView tv = mActivity.getTerminalView();
-+            if (tv == null || tv.mEmulator == null) return;
-+            String copied = "COPY".equals(key) ? tv.mEmulator.getCopyLastOutput() : tv.mEmulator.getCopyAllText();
-+            if (copied == null || copied.isEmpty()) {
-+                mActivity.showToast("No output to copy yet", false);
-+                return;
-+            }
-+            // ClipboardManager uses size-limited Binder transactions.
-+            if (copied.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 450000) {
-+                mActivity.showToast("Output exceeds Android clipboard limit", true);
-+                return;
-+            }
-+            try {
-+                com.termux.shared.interact.ShareUtils.copyTextToClipboard(mActivity, copied);
-+                mActivity.showToast("Copied " + copied.length() + " characters", false);
-+            } catch (RuntimeException e) {
-+                mActivity.showToast("Clipboard error: " + e.getMessage(), true);
-+            }
-         } else if ("PASTE".equals(key)) {
-             if(mTermuxTerminalSessionActivityClient != null)
-                 mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
-diff --git a/app/build.gradle b/app/build.gradle
---- a/app/build.gradle
-+++ b/app/build.gradle
-@@ -71,8 +71,8 @@
-                 enable ((gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
-                     (gradle.startParameter.taskNames.any { it.contains("Release") } && splitAPKsForReleaseBuilds == "1"))
-                 reset ()
--                include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
--                universalApk true
-+                include 'arm64-v8a'
-+                universalApk false
-             }
-         }
-     }
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
+index dd935f3..7261435 100644
+--- a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
+@@ -326,7 +326,7 @@ public final class TermuxPropertyConstants {
+     /** Defines the key for extra keys */
+     public static final String KEY_EXTRA_KEYS =  "extra-keys"; // Default: "extra-keys"
+     //public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]"; // Single row
+-    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Double row
++    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','COPY'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT',{key: 'FULL', popup: {key: 'SHARE-FULL', display: 'TXT'}}]]"; // Double row
+ 
+     /** Defines the key for extra keys style */
+     public static final String KEY_EXTRA_KEYS_STYLE =  "extra-keys-style"; // Default: "extra-keys-style"

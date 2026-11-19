@@ -4,10 +4,12 @@ This branch is a build harness, **not a true fork**. GitHub Actions clones the o
 
 **COPY**: output after the most recent pasted block of commands. Echoes of pasted commands and the final prompt are removed heuristically, but cannot be distinguished perfectly from program output. Gboard is detected via multi-character IME commits; behaviour differs between keyboards.
 
-**FULL**: full *retained* main terminal history, including the commands. Standard Termux scrollback retains 2,000 lines, configurable up to 50,000 through `terminal-transcript-rows` in `~/.termux/termux.properties`. Older evicted lines are not recoverable. Clipboard transfers above 450KB UTF-8 are refused rather than truncated. A custom `extra-keys` property can override the new default buttons (PGUP and PGDN are replaced; HOME is preserved).
+The **FULL** key copies the retained main terminal history, including the commands. Termux puts shorter transcripts directly in the Android clipboard and copies a reference to a UTF-8 text file for larger transcripts. To paste a long transcript, press and hold the destination text field and select **Paste**. Gboard's clipboard history can shorten long entries.
+
+Swipe up on **FULL** to share the full transcript as a `.txt` file. Use this option if the destination app does not accept long clipboard entries. Standard Termux scrollback retains 2,000 lines, configurable up to 50,000 through `terminal-transcript-rows` in `~/.termux/termux.properties`. A custom `extra-keys` property can override the default buttons.
 
 Go to **Actions** to see builds, and **Releases** to download a successful APK. Gboard reads the Android system clipboard, but it can decide how long to keep entries.
 
 **ABI target:** only `arm64-v8a` is enabled in the patched app/build.gradle; universal, arm32, x86 and x86_64 outputs are disabled. Intended for 64-bit ARM devices such as Galaxy S23. The existing Termux app on the phone cannot be updated with this build if Android rejects its different APK signing certificate. Installing this build does not transfer root access or data automatically.
 
-**Default extra keys:** `ESC / - HOME UP END COPY` (first row) and `TAB CTRL ALT LEFT DOWN RIGHT FULL` (second row). `FULL` is the same action previously labeled `COPY1`.
+The default top row is `ESC / - HOME UP END COPY`. The second row is `TAB CTRL ALT LEFT DOWN RIGHT FULL`, with the `TXT` swipe-up action on `FULL`.
