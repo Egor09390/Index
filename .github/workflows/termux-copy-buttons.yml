@@ -52,5 +52,5 @@ jobs:
           gh release create "$tag" termux-src/app/build/outputs/apk/debug/*_arm64-v8a.apk \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Termux COPY/FULL ARM64-v8a build ${{ github.run_number }}" \
-            --notes "Unofficial Android 7+ arm64-v8a debug APK. The round arrow opens the sessions menu. Press and hold a session to show the Delete button. FULL copies the entire retained scrollback to the Android clipboard. For long transcripts, use Paste from the destination text field. Swipe up on FULL to share a .txt file. COPY filters output from the most recent pasted commands. Different APK signatures may prevent installing over an existing Termux." \
+            --notes "Unofficial Android 7+ arm64-v8a debug APK. The toolbar has one row with CTRL, COPY, and FULL on the left. The round ivory arrow opens the sessions menu. Press and hold a session to show the light Delete dialog. FULL copies the entire retained scrollback to the Android clipboard. For long transcripts, use Paste from the destination text field. Swipe up on FULL to share a .txt file. COPY filters output from the most recent pasted commands. Different APK signatures may prevent installing over an existing Termux." \
             --prerelease
