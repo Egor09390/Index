@@ -158,6 +158,63 @@ index bd78914..ccfdafa 100644
          int size = service.getTermuxSessionsSize();
          if (size == 0) {
              // There are no sessions to show, so finish the activity.
+diff --git a/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java b/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java
+new file mode 100644
+index 0000000..e4ea567
+--- /dev/null
++++ b/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java
+@@ -0,0 +1,51 @@
++package com.termux.app.terminal.io;
++
++import java.util.ArrayList;
++import java.util.List;
++
++final class FullTranscriptCopyQueue {
++
++    // Leave room below Gboard's 20,000-character clipboard history limit.
++    static final int MAX_PART_LENGTH = 19_000;
++    private static final int LINE_BREAK_LOOKBACK = 256;
++
++    private final List<String> parts = new ArrayList<>();
++    private int partIndex;
++
++    FullTranscriptCopyQueue(String transcript) {
++        for (int start = 0; start < transcript.length();) {
++            int end = start + Math.min(transcript.length() - start, MAX_PART_LENGTH);
++            if (end < transcript.length()) end = chooseBoundary(transcript, end);
++            parts.add(transcript.substring(start, end));
++            start = end;
++        }
++    }
++
++    private static int chooseBoundary(String transcript, int end) {
++        for (int i = end - 1; i >= end - LINE_BREAK_LOOKBACK; i--) {
++            if (transcript.charAt(i) == '\n') return i + 1;
++        }
++        if (Character.isHighSurrogate(transcript.charAt(end - 1))
++                && Character.isLowSurrogate(transcript.charAt(end))) {
++            return end - 1;
++        }
++        return end;
++    }
++
++    String currentPart() {
++        return parts.get(partIndex);
++    }
++
++    int partNumber() {
++        return partIndex + 1;
++    }
++
++    int partCount() {
++        return parts.size();
++    }
++
++    /** Advance after the current part has been written to the clipboard. */
++    boolean advance() {
++        return ++partIndex < parts.size();
++    }
++}
 diff --git a/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java
 new file mode 100644
 index 0000000..ed38ea8
@@ -216,7 +273,7 @@ index 0000000..ed38ea8
 +    }
 +}
 diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
-index a38e8cb..ccc73c7 100644
+index a38e8cb..c5642aa 100644
 --- a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
 +++ b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
 @@ -1,12 +1,19 @@
@@ -239,11 +296,18 @@ index a38e8cb..ccc73c7 100644
  import com.termux.app.TermuxActivity;
  import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
  import com.termux.app.terminal.TermuxTerminalViewClient;
-@@ -20,8 +27,13 @@ import com.termux.view.TerminalView;
+@@ -16,13 +23,22 @@ import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
+ import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
+ import com.termux.shared.termux.settings.properties.TermuxSharedProperties;
+ import com.termux.shared.termux.terminal.io.TerminalExtraKeys;
++import com.termux.terminal.TerminalEmulator;
+ import com.termux.view.TerminalView;
  
  import org.json.JSONException;
  
 +import java.io.IOException;
++import java.util.Map;
++import java.util.WeakHashMap;
 +
  public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
  
@@ -251,9 +315,11 @@ index a38e8cb..ccc73c7 100644
 +    private static final int MAX_INLINE_TRANSCRIPT_LENGTH = 200_000;
 +
      private ExtraKeysInfo mExtraKeysInfo;
++    private final Map<TerminalEmulator, FullTranscriptCopyQueue> mFullCopyQueues = new WeakHashMap<>();
  
      final TermuxActivity mActivity;
-@@ -93,6 +105,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+     final TermuxTerminalViewClient mTermuxTerminalViewClient;
+@@ -93,6 +109,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
                  drawerLayout.closeDrawer(Gravity.LEFT);
              else
                  drawerLayout.openDrawer(Gravity.LEFT);
@@ -262,7 +328,7 @@ index a38e8cb..ccc73c7 100644
          } else if ("PASTE".equals(key)) {
              if(mTermuxTerminalSessionActivityClient != null)
                  mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
-@@ -105,4 +119,51 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+@@ -105,4 +123,83 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
          }
      }
  
@@ -270,14 +336,19 @@ index a38e8cb..ccc73c7 100644
 +        TerminalView terminalView = mActivity.getTerminalView();
 +        if (terminalView == null || terminalView.mEmulator == null) return;
 +
-+        String text = "COPY".equals(key) ? terminalView.mEmulator.getCopyLastOutput()
-+            : terminalView.mEmulator.getCopyAllText();
-+        if (text == null || text.isEmpty()) {
-+            mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
-+            return;
-+        }
-+
++        TerminalEmulator emulator = terminalView.mEmulator;
 +        try {
++            if ("FULL".equals(key)) {
++                copyFullTranscriptPart(emulator);
++                return;
++            }
++
++            String text = "COPY".equals(key) ? emulator.getCopyLastOutput() : emulator.getCopyAllText();
++            if (text == null || text.isEmpty()) {
++                mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
++                return;
++            }
++
 +            if ("SHARE-FULL".equals(key)) {
 +                Uri uri = TerminalTranscriptFileProvider.writeTranscript(mActivity, text);
 +                Intent intent = new Intent(Intent.ACTION_SEND)
@@ -292,6 +363,33 @@ index a38e8cb..ccc73c7 100644
 +        } catch (IOException | RuntimeException e) {
 +            Logger.logStackTraceWithMessage(LOG_TAG, "Could not copy or share the transcript", e);
 +            mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_transfer_failed), true);
++        }
++    }
++
++    private void copyFullTranscriptPart(TerminalEmulator emulator) throws IOException {
++        FullTranscriptCopyQueue queue = mFullCopyQueues.get(emulator);
++        if (queue == null) {
++            String snapshot = emulator.getCopyAllText();
++            if (snapshot.isEmpty()) {
++                mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
++                return;
++            }
++            queue = new FullTranscriptCopyQueue(snapshot);
++            mFullCopyQueues.put(emulator, queue);
++        }
++
++        int part = queue.partNumber();
++        int total = queue.partCount();
++        copyTranscript(queue.currentPart());
++        boolean hasMore = queue.advance();
++        if (!hasMore) mFullCopyQueues.remove(emulator);
++
++        if (total == 1) {
++            mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_copied), true);
++        } else {
++            int message = hasMore ? R.string.msg_terminal_transcript_part_copied
++                : R.string.msg_terminal_transcript_final_part_copied;
++            mActivity.showToast(mActivity.getString(message, part, total), true);
 +        }
 +    }
 +
@@ -438,7 +536,7 @@ index 045e125..393684b 100644
 +    <color name="session_surface">#ECE8DF</color>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cbd2992..28a891d 100644
+index cbd2992..c40a4ae 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -42,6 +42,8 @@
@@ -450,12 +548,14 @@ index cbd2992..28a891d 100644
      <string name="action_new_session">New session</string>
      <string name="action_new_session_failsafe">Failsafe</string>
      <string name="title_max_terminals_reached">Max terminals reached</string>
-@@ -68,6 +70,9 @@
+@@ -68,6 +70,11 @@
      <string name="action_share_transcript">Share transcript</string>
      <string name="title_share_transcript">Terminal transcript</string>
      <string name="title_share_transcript_with">Send transcript to:</string>
 +    <string name="msg_no_terminal_transcript">No terminal output to copy</string>
 +    <string name="msg_terminal_transcript_copied">Transcript copied. Use Paste in the text field.</string>
++    <string name="msg_terminal_transcript_part_copied">Copied %1$d/%2$d. Paste, then tap FULL again.</string>
++    <string name="msg_terminal_transcript_final_part_copied">Copied %1$d/%2$d. This is the last part.</string>
 +    <string name="msg_terminal_transcript_transfer_failed">Could not copy or share the terminal transcript</string>
  
      <string name="action_share_selected_text">Share selected text</string>
@@ -470,6 +570,72 @@ index 0000000..6b70ef1
 +<paths>
 +    <cache-path name="transcripts" path="terminal-transcripts/" />
 +</paths>
+diff --git a/app/src/test/java/com/termux/app/terminal/io/FullTranscriptCopyQueueTest.java b/app/src/test/java/com/termux/app/terminal/io/FullTranscriptCopyQueueTest.java
+new file mode 100644
+index 0000000..53b3f81
+--- /dev/null
++++ b/app/src/test/java/com/termux/app/terminal/io/FullTranscriptCopyQueueTest.java
+@@ -0,0 +1,60 @@
++package com.termux.app.terminal.io;
++
++import org.junit.Test;
++
++import java.util.Arrays;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
++
++public class FullTranscriptCopyQueueTest {
++
++    @Test
++    public void longTranscriptReassemblesInOrderWithoutLosingCharacters() {
++        String transcript = repeated('a', 18_900) + "\n"
++            + repeated('b', 19_000) + "\n" + repeated('c', 6_388);
++        FullTranscriptCopyQueue queue = new FullTranscriptCopyQueue(transcript);
++
++        assertEquals(44_290, transcript.length());
++        assertEquals(3, queue.partCount());
++        assertTrue(queue.currentPart().endsWith("\n"));
++        StringBuilder pasted = new StringBuilder();
++        for (int part = 1; part <= 3; part++) {
++            assertEquals(part, queue.partNumber());
++            String text = queue.currentPart();
++            assertTrue(text.length() <= FullTranscriptCopyQueue.MAX_PART_LENGTH);
++            assertEquals(text, queue.currentPart());
++            pasted.append(text);
++            assertEquals(part < 3, queue.advance());
++        }
++        assertEquals(transcript, pasted.toString());
++    }
++
++    @Test
++    public void splitKeepsSurrogatePairTogether() {
++        String before = repeated('a', FullTranscriptCopyQueue.MAX_PART_LENGTH - 1);
++        FullTranscriptCopyQueue queue = new FullTranscriptCopyQueue(before + "\uD83D\uDE80tail");
++
++        assertEquals(before, queue.currentPart());
++        assertTrue(queue.advance());
++        assertEquals("\uD83D\uDE80tail", queue.currentPart());
++        assertFalse(queue.advance());
++    }
++
++    @Test
++    public void textAtTheLimitStaysInOnePart() {
++        String transcript = repeated('a', FullTranscriptCopyQueue.MAX_PART_LENGTH);
++        FullTranscriptCopyQueue queue = new FullTranscriptCopyQueue(transcript);
++
++        assertEquals(1, queue.partCount());
++        assertEquals(transcript, queue.currentPart());
++        assertFalse(queue.advance());
++    }
++
++    private static String repeated(char character, int count) {
++        char[] characters = new char[count];
++        Arrays.fill(characters, character);
++        return new String(characters);
++    }
++}
 diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
 index 5e943ab..1105246 100644
 --- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java

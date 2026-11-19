@@ -4,7 +4,7 @@ This branch is a build harness, **not a true fork**. GitHub Actions clones the o
 
 **COPY**: output after the most recent pasted block of commands. Echoes of pasted commands and the final prompt are removed heuristically, but cannot be distinguished perfectly from program output. Gboard is detected via multi-character IME commits; behaviour differs between keyboards.
 
-The **FULL** key copies the retained main terminal history, including commands. It joins lines wrapped by the display just as manual selection does. **COPY** and **FULL** put shorter text directly in the Android clipboard and copy a reference to a UTF-8 text file for larger text. To paste a long transcript, press and hold the destination text field and select **Paste**. Gboard's clipboard history can shorten long entries.
+The **FULL** key copies the retained main terminal history, including commands. It joins lines wrapped by the display just as manual selection does. A transcript of up to 19,000 UTF-16 units is copied in one go. For longer transcripts, tap **FULL** and paste the first part, then tap **FULL** again and paste the next part until the notification shows the last part. Each part stays below Gboard's 20,000-character limit. Paste at the end of the previous part to reconstruct the transcript exactly. A new queue starts from the current history after the last part has been copied.
 
 Swipe up on **FULL** to share the full transcript as a `.txt` file. Use this option if the destination app does not accept long clipboard entries. Standard Termux scrollback retains 2,000 lines, configurable up to 50,000 through `terminal-transcript-rows` in `~/.termux/termux.properties`. A custom `extra-keys` property can override the default buttons.
 
