@@ -1,0 +1,80 @@
+name: Publish signed Throne quality.15 APK
+on:
+  push:
+    branches: [throne-quality-15-download]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-throne-quality-15
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify and publish the signed ARM64 update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          THRONE_TAG: v2.0.7-quality.15
+          THRONE_SOURCE: Throne-2.0.7-quality.15-arm64-v8a-debug.apk
+          THRONE_APK: Throne-2.0.7-quality.15-arm64-v8a.apk
+          THRONE_SHA: f112a265f4fb618e9314ac2aa85ba7df0b99c19ab4b3aabe025fa14ada836577
+        run: |
+          set -euo pipefail
+          api="repos/$GH_REPO/releases/tags/$THRONE_TAG"
+          gh api "$api" | jq -e '.id == 452993627' >/dev/null
+          cd "$RUNNER_TEMP"
+          gh release download "$THRONE_TAG" --pattern "$THRONE_SOURCE" --pattern SHA256SUMS
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import zlib
+
+          source = Path(os.environ["THRONE_SOURCE"]).read_bytes()
+          if hashlib.sha256(source).hexdigest() != "98d1a033eea263c2f66982010cae6e32c0ee6ea22a7cba69305fc552c370d1fc":
+              raise SystemExit("Unexpected original APK checksum")
+          delta = Path(os.environ["GITHUB_WORKSPACE"], "throne-apk-delivery/quality-15.b64").read_bytes()
+          signed = bytearray()
+          for entry in json.loads(zlib.decompress(base64.b64decode(delta))):
+              if isinstance(entry, str):
+                  signed.extend(base64.b64decode(entry))
+              else:
+                  offset, size = entry
+                  signed.extend(source[offset:offset + size])
+          digest = hashlib.sha256(signed).hexdigest()
+          if digest != os.environ["THRONE_SHA"]:
+              raise SystemExit("Unexpected signed APK checksum")
+          apk = os.environ["THRONE_APK"]
+          Path(apk).write_bytes(signed)
+          checksums = Path("SHA256SUMS")
+          lines = [line for line in checksums.read_text().splitlines() if line.split(maxsplit=1)[-1] != apk]
+          checksums.write_text("\n".join([*lines, f"{digest}  {apk}"]) + "\n")
+          PY
+
+          sum_digest=$(sha256sum SHA256SUMS | cut -d ' ' -f 1)
+          gh release upload "$THRONE_TAG" "$THRONE_APK" SHA256SUMS --clobber
+          gh api "$api" | jq -e --arg apk "$THRONE_APK" --arg sha "sha256:$THRONE_SHA" --arg sum "sha256:$sum_digest" '
+            any(.assets[]; .name == $apk and .state == "uploaded" and .digest == $sha) and
+            any(.assets[]; .name == "SHA256SUMS" and .state == "uploaded" and .digest == $sum)
+          ' >/dev/null
+
+          cat > release.md <<'EOF'
+          * Remove the home-screen status and toggle widgets and their background updates.
+          * Remove unused helpers and translations for features removed in earlier builds.
+
+          `Throne-2.0.7-quality.15-arm64-v8a.apk` uses the same app ID and Throne Fork Release signing certificate as the signed ARM64 APK for quality.13. It is an in-place update of that build.
+
+          The APKs with `-debug.apk` in the filename use the Android debug certificate.
+          EOF
+          gh release edit "$THRONE_TAG" --prerelease=false --latest --notes-file release.md
+          gh api "repos/$GH_REPO/releases/latest" | jq -e --arg tag "$THRONE_TAG" --arg apk "$THRONE_APK" --arg sha "sha256:$THRONE_SHA" '
+            .tag_name == $tag and .prerelease == false and .draft == false and
+            any(.assets[]; .name == $apk and .digest == $sha)
+          ' >/dev/null
