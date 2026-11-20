@@ -43,8 +43,10 @@
             android:foreground="@drawable/fab_focus_ring"
             android:nextFocusDown="@+id/stats"
             app:backgroundTint="?colorPrimary"
+            app:fabCustomSize="84dp"
             app:layout_anchor="@id/stats"
             app:layout_dodgeInsetEdges="top"
+            app:maxImageSize="36dp"
             app:pressedTranslationZ="6dp"
             app:srcCompat="@drawable/ic_service_idle" />
 
@@ -65,22 +67,33 @@
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
-    <com.google.android.material.navigation.NavigationView
-        android:id="@+id/nav_view"
-        style="@style/Widget.Design.NavigationView"
-        app:insetForeground="@android:color/transparent"
+    <FrameLayout
+        android:id="@+id/nav_drawer"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_gravity="start"
-        app:itemIconTint="@color/navigation_icon"
-        app:itemShapeAppearance="@style/ShapeAppearance.SagerNet.NavItem"
-        app:itemShapeFillColor="@color/nav_item_fill"
-        app:itemShapeInsetStart="8dp"
-        app:itemShapeInsetEnd="8dp"
-        app:itemShapeInsetTop="3dp"
-        app:itemShapeInsetBottom="3dp"
-        app:itemTextColor="@color/navigation_icon"
-        app:menu="@menu/main_drawer_menu" />
+        android:background="?android:attr/windowBackground">
 
+        <com.google.android.material.navigation.NavigationView
+            android:id="@+id/nav_view"
+            style="@style/Widget.Design.NavigationView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:background="@android:color/transparent"
+            android:fitsSystemWindows="false"
+            app:elevation="0dp"
+            app:insetForeground="@android:color/transparent"
+            app:itemIconTint="@color/navigation_icon"
+            app:itemShapeAppearance="@style/ShapeAppearance.SagerNet.NavItem"
+            app:itemShapeFillColor="@color/nav_item_fill"
+            app:itemShapeInsetStart="8dp"
+            app:itemShapeInsetEnd="8dp"
+            app:itemShapeInsetTop="3dp"
+            app:itemShapeInsetBottom="3dp"
+            app:itemTextColor="@color/navigation_icon"
+            app:menu="@menu/main_drawer_menu" />
+
+    </FrameLayout>
 
 </androidx.drawerlayout.widget.DrawerLayout>

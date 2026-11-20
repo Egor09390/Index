@@ -112,10 +112,15 @@ index 28bcdd4..c161e6b 100644
  # python bytecode
  __pycache__/
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..2b412fc 100644
+index 6460f87..68022c1 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,78 @@
+@@ -1,3 +1,83 @@
++#### 2.0.7-quality.17
++
++* Increase the VPN connect button and its icon by 50%.
++* Center the navigation items vertically and remove the divider.
++
 +#### 2.0.7-quality.16
 +
 +* Remove Appearance, Inbound, DNS and Presets from Settings, including their editors.
@@ -4043,10 +4048,10 @@ index 066aa40..0000000
 -    }
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
-index 650a1a3..2e63329 100644
+index 650a1a3..d65a655 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
-@@ -17,7 +17,8 @@ import android.view.ViewGroup
+@@ -17,10 +17,12 @@ import android.view.ViewGroup
  import androidx.activity.addCallback
  import androidx.annotation.IdRes
  import androidx.appcompat.widget.PopupMenu
@@ -4056,7 +4061,11 @@ index 650a1a3..2e63329 100644
  import androidx.core.view.ViewCompat
  import androidx.core.view.updatePaddingRelative
  import androidx.core.view.WindowCompat
-@@ -43,12 +44,10 @@ import io.nekohasekai.sagernet.database.backup.BackupEntry
++import androidx.core.view.WindowInsetsCompat
+ import androidx.preference.PreferenceDataStore
+ import com.google.android.material.dialog.MaterialAlertDialogBuilder
+ import com.google.android.material.navigation.NavigationView
+@@ -43,12 +45,10 @@ import io.nekohasekai.sagernet.database.backup.BackupEntry
  import io.nekohasekai.sagernet.databinding.LayoutMainBinding
  import io.nekohasekai.sagernet.ktx.alert
  import io.nekohasekai.sagernet.ktx.isPreview
@@ -4069,7 +4078,7 @@ index 650a1a3..2e63329 100644
  import io.nekohasekai.sagernet.ui.settings.XrayGeoSettingsFragment
  import io.nekohasekai.sagernet.ui.test.TestSessionClient
  import io.nekohasekai.sagernet.ktx.readableMessage
-@@ -75,6 +74,11 @@ class MainActivity : ThemedActivity(),
+@@ -75,6 +75,11 @@ class MainActivity : ThemedActivity(),
      companion object {
          /** Texts to import (the QR scanner): URLs and deep links one by one, the rest as one import. */
          const val EXTRA_IMPORT_TEXTS = "importTexts"
@@ -4081,7 +4090,7 @@ index 650a1a3..2e63329 100644
      }
  
      lateinit var binding: LayoutMainBinding
-@@ -82,31 +86,19 @@ class MainActivity : ThemedActivity(),
+@@ -82,38 +87,30 @@ class MainActivity : ThemedActivity(),
      private var currentMainFragment: ToolbarFragment? = null
  
      override fun onCreate(savedInstanceState: Bundle?) {
@@ -4118,9 +4127,25 @@ index 650a1a3..2e63329 100644
 -        }
 +        navigation = binding.navView
          navigation.setNavigationItemSelectedListener(this)
-         // NavigationView pads its header and menu itself (top/bottom); its side follows side bars and cutouts.
-         ViewCompat.setOnApplyWindowInsetsListener(binding.drawerLayout) { _, insets ->
-@@ -165,7 +157,6 @@ class MainActivity : ThemedActivity(),
+-        // NavigationView pads its header and menu itself (top/bottom); its side follows side bars and cutouts.
+-        ViewCompat.setOnApplyWindowInsetsListener(binding.drawerLayout) { _, insets ->
++        // Center the menu in the visible drawer, between the system bars.
++        ViewCompat.setOnApplyWindowInsetsListener(binding.navDrawer) { drawer, insets ->
+             val bars = insets.bars()
+-            val rtl = navigation.layoutDirection == View.LAYOUT_DIRECTION_RTL
+-            navigation.updatePaddingRelative(start = if (rtl) bars.right else bars.left)
+-            insets
++            val rtl = drawer.layoutDirection == View.LAYOUT_DIRECTION_RTL
++            drawer.updatePaddingRelative(
++                start = if (rtl) bars.right else bars.left,
++                top = bars.top,
++                bottom = bars.bottom,
++            )
++            WindowInsetsCompat.CONSUMED
+         }
+         // The drawer's surface runs under the status bar: the icons follow it while the drawer is mostly open.
+         binding.drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+@@ -165,7 +162,6 @@ class MainActivity : ThemedActivity(),
          if (savedInstanceState == null) intent?.let(::handleImportIntent)
          SubscriptionReportDialog.observe(this)
  
@@ -4128,7 +4153,7 @@ index 650a1a3..2e63329 100644
  
          if (savedInstanceState == null) {
              firstStart.start()
-@@ -222,13 +213,6 @@ class MainActivity : ThemedActivity(),
+@@ -222,13 +218,6 @@ class MainActivity : ThemedActivity(),
          }
      }
  
@@ -4142,7 +4167,7 @@ index 650a1a3..2e63329 100644
      override fun onNewIntent(intent: Intent) {
          super.onNewIntent(intent)
  
-@@ -406,20 +390,11 @@ class MainActivity : ThemedActivity(),
+@@ -406,20 +395,11 @@ class MainActivity : ThemedActivity(),
              R.id.nav_group -> displayFragment(GroupFragment())
              R.id.nav_route -> displayFragment(RouteFragment())
              R.id.nav_settings -> displayFragment(SettingsFragment())
@@ -4164,7 +4189,7 @@ index 650a1a3..2e63329 100644
          return true
      }
  
-@@ -433,7 +408,6 @@ class MainActivity : ThemedActivity(),
+@@ -433,7 +413,6 @@ class MainActivity : ThemedActivity(),
          refreshConfigurationProfileState()
          when (val fragment = currentMainFragment ?: supportFragmentManager.findFragmentById(R.id.fragment_holder)) {
              is RouteFragment -> fragment.onServiceStateChanged()
@@ -4172,7 +4197,7 @@ index 650a1a3..2e63329 100644
          }
  
          binding.fab.changeState(state, DataStore.serviceState, animate)
-@@ -455,11 +429,7 @@ class MainActivity : ThemedActivity(),
+@@ -455,11 +434,7 @@ class MainActivity : ThemedActivity(),
          if (errorBar?.isShownOrQueued == true && errorShown == message) return
          errorShown = message
          val bar = snackbar(message).setDuration(Snackbar.LENGTH_INDEFINITE)
@@ -4185,7 +4210,7 @@ index 650a1a3..2e63329 100644
              bar.setAction(R.string.xray_geo_assets_action) {
                  openSettingsScreen(XrayGeoSettingsFragment::class.java.name, getString(R.string.xray_geo_assets))
              }
-@@ -472,7 +442,6 @@ class MainActivity : ThemedActivity(),
+@@ -472,7 +447,6 @@ class MainActivity : ThemedActivity(),
              override fun onDismissed(transientBottomBar: Snackbar, event: Int) {
                  if (event == DISMISS_EVENT_SWIPE || event == DISMISS_EVENT_ACTION) {
                      DataStore.serviceError = ""
@@ -4193,7 +4218,7 @@ index 650a1a3..2e63329 100644
                      DataStore.serviceErrorGeo = false
                      DataStore.serviceErrorRuleSets = false
                  }
-@@ -499,14 +468,13 @@ class MainActivity : ThemedActivity(),
+@@ -499,14 +473,13 @@ class MainActivity : ThemedActivity(),
          (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)?.showGroup(id)
      }
  
@@ -6056,6 +6081,36 @@ index 0e8e560..2f3836b 100644
 +    fun usingNightMode(): Boolean =
 +        (app.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
  }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/widget/FabProgressBehavior.kt b/app/src/main/java/io/nekohasekai/sagernet/widget/FabProgressBehavior.kt
+index ae0855e..d3ff095 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/widget/FabProgressBehavior.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/widget/FabProgressBehavior.kt
+@@ -16,14 +16,17 @@ class FabProgressBehavior(context: Context, attrs: AttributeSet?) :
+         return dependency.id == (child.layoutParams as CoordinatorLayout.LayoutParams).anchorId
+     }
+ 
+-    override fun onLayoutChild(
+-        parent: CoordinatorLayout, child: CircularProgressIndicator,
+-        layoutDirection: Int,
++    override fun onMeasureChild(
++        parent: CoordinatorLayout,
++        child: CircularProgressIndicator,
++        parentWidthMeasureSpec: Int,
++        widthUsed: Int,
++        parentHeightMeasureSpec: Int,
++        heightUsed: Int,
+     ): Boolean {
+-        val size = parent.getDependencies(child).single().measuredHeight + child.trackThickness
+-        return if (child.indicatorSize != size) {
+-            child.indicatorSize = size
+-            true
+-        } else false
++        val anchorId = (child.layoutParams as CoordinatorLayout.LayoutParams).anchorId
++        val button = parent.getDependencies(child).single { it.id == anchorId }
++        child.indicatorSize = button.measuredHeight + child.trackThickness
++        return false
+     }
+ }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/widget/LiveChartView.kt b/app/src/main/java/io/nekohasekai/sagernet/widget/LiveChartView.kt
 deleted file mode 100644
 index f5095f0..0000000
@@ -7786,6 +7841,19 @@ index f7dec45..0000000
 -<?xml version="1.0" encoding="utf-8"?>
 -<ripple xmlns:android="http://schemas.android.com/apk/res/android"
 -    android:color="@color/widget_ripple" />
+diff --git a/app/src/main/res/layout-land/layout_stats_bar_content.xml b/app/src/main/res/layout-land/layout_stats_bar_content.xml
+index 43f8bbc..60913ac 100644
+--- a/app/src/main/res/layout-land/layout_stats_bar_content.xml
++++ b/app/src/main/res/layout-land/layout_stats_bar_content.xml
+@@ -41,7 +41,7 @@
+     </LinearLayout>
+ 
+     <Space
+-        android:layout_width="96dp"
++        android:layout_width="124dp"
+         android:layout_height="0dp" />
+ 
+     <!-- The exit keeps its width, the status takes what is left. -->
 diff --git a/app/src/main/res/layout/layout_about.xml b/app/src/main/res/layout/layout_about.xml
 deleted file mode 100644
 index fb67ee8..0000000
@@ -8474,12 +8542,43 @@ index 0376830..0000000
 -
 -</LinearLayout>
 diff --git a/app/src/main/res/layout/layout_main.xml b/app/src/main/res/layout/layout_main.xml
-index 70f960d..ffcf2c8 100644
+index 70f960d..7cb6370 100644
 --- a/app/src/main/res/layout/layout_main.xml
 +++ b/app/src/main/res/layout/layout_main.xml
-@@ -82,21 +82,5 @@
-         app:itemTextColor="@color/navigation_icon"
-         app:menu="@menu/main_drawer_menu" />
+@@ -43,8 +43,10 @@
+             android:foreground="@drawable/fab_focus_ring"
+             android:nextFocusDown="@+id/stats"
+             app:backgroundTint="?colorPrimary"
++            app:fabCustomSize="84dp"
+             app:layout_anchor="@id/stats"
+             app:layout_dodgeInsetEdges="top"
++            app:maxImageSize="36dp"
+             app:pressedTranslationZ="6dp"
+             app:srcCompat="@drawable/ic_service_idle" />
+ 
+@@ -65,38 +67,33 @@
+ 
+     </androidx.coordinatorlayout.widget.CoordinatorLayout>
+ 
+-    <com.google.android.material.navigation.NavigationView
+-        android:id="@+id/nav_view"
+-        style="@style/Widget.Design.NavigationView"
+-        app:insetForeground="@android:color/transparent"
++    <FrameLayout
++        android:id="@+id/nav_drawer"
+         android:layout_width="wrap_content"
+         android:layout_height="match_parent"
+         android:layout_gravity="start"
+-        app:itemIconTint="@color/navigation_icon"
+-        app:itemShapeAppearance="@style/ShapeAppearance.SagerNet.NavItem"
+-        app:itemShapeFillColor="@color/nav_item_fill"
+-        app:itemShapeInsetStart="8dp"
+-        app:itemShapeInsetEnd="8dp"
+-        app:itemShapeInsetTop="3dp"
+-        app:itemShapeInsetBottom="3dp"
+-        app:itemTextColor="@color/navigation_icon"
+-        app:menu="@menu/main_drawer_menu" />
++        android:background="?android:attr/windowBackground">
  
 -    <com.google.android.material.navigation.NavigationView
 -        android:id="@+id/nav_view_black"
@@ -8497,6 +8596,27 @@ index 70f960d..ffcf2c8 100644
 -        app:itemShapeInsetBottom="3dp"
 -        app:itemTextColor="@color/navigation_icon"
 -        app:menu="@menu/main_drawer_menu" />
++        <com.google.android.material.navigation.NavigationView
++            android:id="@+id/nav_view"
++            style="@style/Widget.Design.NavigationView"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_gravity="center_vertical"
++            android:background="@android:color/transparent"
++            android:fitsSystemWindows="false"
++            app:elevation="0dp"
++            app:insetForeground="@android:color/transparent"
++            app:itemIconTint="@color/navigation_icon"
++            app:itemShapeAppearance="@style/ShapeAppearance.SagerNet.NavItem"
++            app:itemShapeFillColor="@color/nav_item_fill"
++            app:itemShapeInsetStart="8dp"
++            app:itemShapeInsetEnd="8dp"
++            app:itemShapeInsetTop="3dp"
++            app:itemShapeInsetBottom="3dp"
++            app:itemTextColor="@color/navigation_icon"
++            app:menu="@menu/main_drawer_menu" />
++
++    </FrameLayout>
  
  </androidx.drawerlayout.widget.DrawerLayout>
 diff --git a/app/src/main/res/layout/layout_notification_actions.xml b/app/src/main/res/layout/layout_notification_actions.xml
@@ -8575,6 +8695,19 @@ index 6c9119e..5f35cdb 100644
              <androidx.appcompat.widget.AppCompatImageView
                  android:id="@+id/edit"
                  android:layout_width="wrap_content"
+diff --git a/app/src/main/res/layout/layout_stats_bar_content.xml b/app/src/main/res/layout/layout_stats_bar_content.xml
+index a2d9665..a79de63 100644
+--- a/app/src/main/res/layout/layout_stats_bar_content.xml
++++ b/app/src/main/res/layout/layout_stats_bar_content.xml
+@@ -39,7 +39,7 @@
+         </LinearLayout>
+ 
+         <Space
+-            android:layout_width="72dp"
++            android:layout_width="100dp"
+             android:layout_height="0dp" />
+ 
+         <TextView
 diff --git a/app/src/main/res/layout/widget_status.xml b/app/src/main/res/layout/widget_status.xml
 deleted file mode 100644
 index 33bc9f4..0000000
@@ -9030,10 +9163,10 @@ index e92cd58..0000000
 -        app:showAsAction="never" />
 -</menu>
 diff --git a/app/src/main/res/menu/main_drawer_menu.xml b/app/src/main/res/menu/main_drawer_menu.xml
-index db509e4..b4be9d8 100644
+index db509e4..cd017d5 100644
 --- a/app/src/main/res/menu/main_drawer_menu.xml
 +++ b/app/src/main/res/menu/main_drawer_menu.xml
-@@ -7,16 +7,6 @@
+@@ -7,54 +7,18 @@
              android:icon="@drawable/ic_action_description"
              android:title="@string/menu_configuration" />
  
@@ -9050,7 +9183,13 @@ index db509e4..b4be9d8 100644
          <item
              android:id="@+id/nav_settings"
              android:icon="@drawable/ic_action_settings"
-@@ -30,31 +20,9 @@
+             android:title="@string/settings" />
+-    </group>
+ 
+-    <group
+-        android:id="@+id/misc"
+-        android:checkableBehavior="single">
+         <item
              android:id="@+id/nav_logcat"
              android:icon="@drawable/ic_baseline_bug_report_24"
              android:title="@string/menu_log" />
@@ -13591,7 +13730,7 @@ index 0000000..b6f8854
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..f6e44c6 100644
+index 751051e..4d6fd04 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -13599,8 +13738,8 @@ index 751051e..f6e44c6 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.16
-+VERSION_CODE=129
++VERSION_NAME=2.0.7-quality.17
++VERSION_CODE=130
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file
 diff --git a/openspec/specs/app-widgets/spec.md b/openspec/specs/app-widgets/spec.md

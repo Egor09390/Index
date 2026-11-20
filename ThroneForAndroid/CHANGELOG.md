@@ -1,3 +1,8 @@
+#### 2.0.7-quality.17
+
+* Increase the VPN connect button and its icon by 50%.
+* Center the navigation items vertically and remove the divider.
+
 #### 2.0.7-quality.16
 
 * Remove Appearance, Inbound, DNS and Presets from Settings, including their editors.

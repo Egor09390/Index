@@ -22,6 +22,7 @@ import androidx.fragment.app.FragmentFactory
 import androidx.core.view.ViewCompat
 import androidx.core.view.updatePaddingRelative
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.preference.PreferenceDataStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationView
@@ -100,12 +101,16 @@ class MainActivity : ThemedActivity(),
         binding.fab.initProgress(binding.fabProgress)
         navigation = binding.navView
         navigation.setNavigationItemSelectedListener(this)
-        // NavigationView pads its header and menu itself (top/bottom); its side follows side bars and cutouts.
-        ViewCompat.setOnApplyWindowInsetsListener(binding.drawerLayout) { _, insets ->
+        // Center the menu in the visible drawer, between the system bars.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.navDrawer) { drawer, insets ->
             val bars = insets.bars()
-            val rtl = navigation.layoutDirection == View.LAYOUT_DIRECTION_RTL
-            navigation.updatePaddingRelative(start = if (rtl) bars.right else bars.left)
-            insets
+            val rtl = drawer.layoutDirection == View.LAYOUT_DIRECTION_RTL
+            drawer.updatePaddingRelative(
+                start = if (rtl) bars.right else bars.left,
+                top = bars.top,
+                bottom = bars.bottom,
+            )
+            WindowInsetsCompat.CONSUMED
         }
         // The drawer's surface runs under the status bar: the icons follow it while the drawer is mostly open.
         binding.drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
