@@ -43,10 +43,15 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..7164acc 100644
+index 6460f87..27437f2 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,32 @@
+@@ -1,3 +1,37 @@
++#### 2.0.7-quality.7
++
++* Route TPROXY's upstream traffic and system DNS through the Android VPN when it covers Throne.
++* Keep the VPN's protected transport sockets out of TPROXY and reconnect upstream sessions when the VPN changes.
++
 +#### 2.0.7-quality.6
 +
 +* Stop the TPROXY core and release its routes when switching or closing the service.
@@ -119,19 +124,42 @@ index 7a2bf3b..8976bc4 100644
  
      const val PROXY_APPS = "proxyApps"
      const val BYPASS_MODE = "bypassMode"
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
+index 67d1624..3ead639 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
+@@ -326,6 +326,11 @@ class BaseService {
+             data.proxy!!.launch()
+         }
+ 
++        suspend fun resetUpstreamConnections() {
++            val box = data.proxy?.boxOrNull ?: return
++            withContext(coreDispatcher) { box.resetNetwork() }
++        }
++
+         fun startRunner() {
+             this as Context
+             if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, javaClass))
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-index f38a717..f6866bd 100644
+index f38a717..7d2fa03 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-@@ -2,15 +2,60 @@ package io.nekohasekai.sagernet.bg
+@@ -2,15 +2,133 @@ package io.nekohasekai.sagernet.bg
  
  import android.app.Service
  import android.content.Intent
 +import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
++import android.net.ConnectivityManager
++import android.net.Network
++import android.net.NetworkCapabilities
++import android.net.NetworkRequest
++import android.os.Build
 +import io.nekohasekai.sagernet.Key
 +import io.nekohasekai.sagernet.R
++import io.nekohasekai.sagernet.SagerNet
 +import io.nekohasekai.sagernet.bg.tproxy.TProxySession
 +import io.nekohasekai.sagernet.database.DataStore
++import io.nekohasekai.sagernet.ktx.Logs
 +import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.runInterruptible
@@ -153,6 +181,67 @@ index f38a717..f6866bd 100644
 +    @Volatile
 +    private var tproxy: TProxySession? = null
 +
++    // Confined to the main thread, including callbacks and service cleanup.
++    private var upstreamVpn: Network? = null
++    private var vpnCallback: ConnectivityManager.NetworkCallback? = null
++
++    override suspend fun preInit() {
++        super.preInit()
++        if (DataStore.serviceMode == Key.MODE_TPROXY) upstreamVpn = defaultVpn()
++    }
++
++    override suspend fun lateInit() {
++        super.lateInit()
++        val session = tproxy ?: return
++        val connectivity = SagerNet.connectivity
++        val callback = object : ConnectivityManager.NetworkCallback() {
++            private fun update() = runOnMainDispatcher {
++                if (tproxy === session && data.state == BaseService.State.Connected) {
++                    updateUpstreamVpn()
++                }
++            }
++
++            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
++                update()
++            }
++
++            override fun onLost(network: Network) {
++                update()
++            }
++        }
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++            connectivity.registerDefaultNetworkCallback(callback)
++        } else {
++            // On older Android the default-network callback follows only the physical network.
++            val vpn = NetworkRequest.Builder()
++                .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
++                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
++                .build()
++            connectivity.registerNetworkCallback(vpn, callback)
++        }
++        vpnCallback = callback
++        updateUpstreamVpn()
++    }
++
++    private fun defaultVpn(): Network? {
++        val connectivity = SagerNet.connectivity
++        val network = connectivity.activeNetwork ?: return null
++        return network.takeIf {
++            connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
++        }
++    }
++
++    private suspend fun updateUpstreamVpn() {
++        val currentVpn = defaultVpn()
++        if (currentVpn == upstreamVpn) return
++        upstreamVpn = currentVpn
++        Logs.i(
++            if (currentVpn != null) "[TPROXY] Android VPN is now the default network"
++            else "[TPROXY] Android VPN is no longer the default network",
++        )
++        resetUpstreamConnections()
++    }
++
 +    override suspend fun startProcesses() {
 +        val rootMode = DataStore.serviceMode == Key.MODE_TPROXY
 +        super.startProcesses()
@@ -170,6 +259,11 @@ index f38a717..f6866bd 100644
 +    override suspend fun killProcesses(): Throwable? {
 +        val session = tproxy
 +        tproxy = null
++        vpnCallback?.let { callback ->
++            runCatching { SagerNet.connectivity.unregisterNetworkCallback(callback) }.onFailure { Logs.w(it) }
++        }
++        vpnCallback = null
++        upstreamVpn = null
 +        val error = withContext(Dispatchers.IO) { runCatching { session?.close() }.exceptionOrNull() }
 +        val coreError = super.killProcesses()
 +        if (error != null && coreError != null) error.addSuppressed(coreError)
@@ -661,10 +755,10 @@ index 0000000..750a3f4
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
 new file mode 100644
-index 0000000..0c8efb2
+index 0000000..20592aa
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,136 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import java.io.Closeable
@@ -727,6 +821,8 @@ index 0000000..0c8efb2
 +        outputRule("-o", "lo", "-j", "RETURN")
 +        outputRule("-m", "owner", "--uid-owner", "0", "-j", "RETURN")
 +        outputRule("-m", "owner", "--uid-owner", uid.toString(), "-j", "RETURN")
++        // VpnService.protect() marks the VPN's transport sockets. Reinjecting them would loop.
++        outputRule("-m", "mark", "--mark", ANDROID_VPN_PROTECTED, "-j", "RETURN")
 +        outputRule("-d", family.multicast, "-j", "RETURN")
 +        if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
 +
@@ -795,6 +891,7 @@ index 0000000..0c8efb2
 +    private companion object {
 +        val WHITESPACE = Regex("\\s+")
 +        const val MARK = "0x10000000/0x10000000"
++        const val ANDROID_VPN_PROTECTED = "0x00020000/0x00020000"
 +        const val PRIORITY = "9000"
 +    }
 +}
@@ -1246,6 +1343,49 @@ index d3fca47..50a761b 100644
              working[id] = RankedResult(
                  profileId = id,
                  latency = row.latency,
+diff --git a/app/src/main/java/moe/matsuri/nb4a/net/LocalResolverImpl.kt b/app/src/main/java/moe/matsuri/nb4a/net/LocalResolverImpl.kt
+index 337e9ac..2ebc0a4 100644
+--- a/app/src/main/java/moe/matsuri/nb4a/net/LocalResolverImpl.kt
++++ b/app/src/main/java/moe/matsuri/nb4a/net/LocalResolverImpl.kt
+@@ -5,7 +5,9 @@ import android.os.Build
+ import android.os.CancellationSignal
+ import android.system.ErrnoException
+ import androidx.annotation.RequiresApi
++import io.nekohasekai.sagernet.Key
+ import io.nekohasekai.sagernet.SagerNet
++import io.nekohasekai.sagernet.database.DataStore
+ import io.nekohasekai.sagernet.ktx.Logs
+ import io.throneproj.mobile.ExchangeContext
+ import io.throneproj.mobile.LocalDNSTransport
+@@ -23,6 +25,10 @@ object LocalResolverImpl : LocalDNSTransport {
+ 
+     private const val RCODE_NXDOMAIN = 3
+ 
++    // With TPROXY our app can use the system VPN. Pinning DNS to the underlying network skips it.
++    private fun resolverNetwork() =
++        if (DataStore.serviceMode == Key.MODE_TPROXY) null else SagerNet.underlyingNetwork
++
+     override fun raw(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+ 
+     @RequiresApi(Build.VERSION_CODES.Q)
+@@ -52,7 +58,7 @@ object LocalResolverImpl : LocalDNSTransport {
+             }
+         }
+         DnsResolver.getInstance().rawQuery(
+-            SagerNet.underlyingNetwork,
++            resolverNetwork(),
+             message,
+             DnsResolver.FLAG_NO_RETRY,
+             Dispatchers.IO.asExecutor(),
+@@ -66,7 +72,7 @@ object LocalResolverImpl : LocalDNSTransport {
+     override fun lookup(ctx: ExchangeContext, network: String, domain: String) {
+         try {
+             val answer = try {
+-                SagerNet.underlyingNetwork?.getAllByName(domain)
++                resolverNetwork()?.getAllByName(domain)
+             } catch (e: UnknownHostException) {
+                 null
+             } ?: InetAddress.getAllByName(domain)
 diff --git a/app/src/main/res/layout/layout_profile.xml b/app/src/main/res/layout/layout_profile.xml
 index 95423dd..6edd62b 100644
 --- a/app/src/main/res/layout/layout_profile.xml
@@ -1802,10 +1942,10 @@ index 0000000..487816d
 +</resources>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
-index 0000000..047d8eb
+index 0000000..9f1f146
 --- /dev/null
 +++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,93 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import org.junit.Assert.assertEquals
@@ -1851,6 +1991,23 @@ index 0000000..047d8eb
 +    }
 +
 +    @Test
++    fun androidVpnTransportBypassesInterceptionIncludingDns() {
++        val commands = mutableListOf<List<String>>()
++        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
++
++        for (name in listOf("iptables", "ip6tables")) {
++            val rules = commands.filter {
++                it.first().endsWith("/$name") && "-A" in it && "THRONE_TPROXY_OUT" in it
++            }
++            val exclusion = rules.indexOfFirst {
++                it.takeLast(6) == listOf("-m", "mark", "--mark", "0x00020000/0x00020000", "-j", "RETURN")
++            }
++            assertTrue(exclusion >= 0)
++            assertTrue(exclusion < rules.indexOfFirst { "--set-xmark" in it })
++        }
++    }
++
++    @Test
 +    fun packetCountsReportOnlyTransparentProxyRules() {
 +        val routes = TProxyRoutes(10231, 30080, emptyList()) { }
 +        val stats = routes.packetCounts { command ->
@@ -1883,7 +2040,7 @@ index 0000000..047d8eb
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..37c6091 100644
+index 751051e..0036228 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -1891,7 +2048,7 @@ index 751051e..37c6091 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.6
-+VERSION_CODE=119
++VERSION_NAME=2.0.7-quality.7
++VERSION_CODE=120
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

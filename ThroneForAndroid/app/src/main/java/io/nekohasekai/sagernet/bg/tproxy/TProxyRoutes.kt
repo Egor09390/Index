@@ -60,6 +60,8 @@ internal class TProxyRoutes(
         outputRule("-o", "lo", "-j", "RETURN")
         outputRule("-m", "owner", "--uid-owner", "0", "-j", "RETURN")
         outputRule("-m", "owner", "--uid-owner", uid.toString(), "-j", "RETURN")
+        // VpnService.protect() marks the VPN's transport sockets. Reinjecting them would loop.
+        outputRule("-m", "mark", "--mark", ANDROID_VPN_PROTECTED, "-j", "RETURN")
         outputRule("-d", family.multicast, "-j", "RETURN")
         if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
 
@@ -128,6 +130,7 @@ internal class TProxyRoutes(
     private companion object {
         val WHITESPACE = Regex("\\s+")
         const val MARK = "0x10000000/0x10000000"
+        const val ANDROID_VPN_PROTECTED = "0x00020000/0x00020000"
         const val PRIORITY = "9000"
     }
 }

@@ -326,6 +326,11 @@ class BaseService {
             data.proxy!!.launch()
         }
 
+        suspend fun resetUpstreamConnections() {
+            val box = data.proxy?.boxOrNull ?: return
+            withContext(coreDispatcher) { box.resetNetwork() }
+        }
+
         fun startRunner() {
             this as Context
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, javaClass))

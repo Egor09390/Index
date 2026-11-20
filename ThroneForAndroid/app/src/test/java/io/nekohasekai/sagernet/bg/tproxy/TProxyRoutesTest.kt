@@ -43,6 +43,23 @@ class TProxyRoutesTest {
     }
 
     @Test
+    fun androidVpnTransportBypassesInterceptionIncludingDns() {
+        val commands = mutableListOf<List<String>>()
+        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
+
+        for (name in listOf("iptables", "ip6tables")) {
+            val rules = commands.filter {
+                it.first().endsWith("/$name") && "-A" in it && "THRONE_TPROXY_OUT" in it
+            }
+            val exclusion = rules.indexOfFirst {
+                it.takeLast(6) == listOf("-m", "mark", "--mark", "0x00020000/0x00020000", "-j", "RETURN")
+            }
+            assertTrue(exclusion >= 0)
+            assertTrue(exclusion < rules.indexOfFirst { "--set-xmark" in it })
+        }
+    }
+
+    @Test
     fun packetCountsReportOnlyTransparentProxyRules() {
         val routes = TProxyRoutes(10231, 30080, emptyList()) { }
         val stats = routes.packetCounts { command ->

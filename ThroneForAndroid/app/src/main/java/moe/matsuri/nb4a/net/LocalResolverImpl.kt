@@ -5,7 +5,9 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.system.ErrnoException
 import androidx.annotation.RequiresApi
+import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.throneproj.mobile.ExchangeContext
 import io.throneproj.mobile.LocalDNSTransport
@@ -22,6 +24,10 @@ import java.util.concurrent.CountDownLatch
 object LocalResolverImpl : LocalDNSTransport {
 
     private const val RCODE_NXDOMAIN = 3
+
+    // With TPROXY our app can use the system VPN. Pinning DNS to the underlying network skips it.
+    private fun resolverNetwork() =
+        if (DataStore.serviceMode == Key.MODE_TPROXY) null else SagerNet.underlyingNetwork
 
     override fun raw(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
@@ -52,7 +58,7 @@ object LocalResolverImpl : LocalDNSTransport {
             }
         }
         DnsResolver.getInstance().rawQuery(
-            SagerNet.underlyingNetwork,
+            resolverNetwork(),
             message,
             DnsResolver.FLAG_NO_RETRY,
             Dispatchers.IO.asExecutor(),
@@ -66,7 +72,7 @@ object LocalResolverImpl : LocalDNSTransport {
     override fun lookup(ctx: ExchangeContext, network: String, domain: String) {
         try {
             val answer = try {
-                SagerNet.underlyingNetwork?.getAllByName(domain)
+                resolverNetwork()?.getAllByName(domain)
             } catch (e: UnknownHostException) {
                 null
             } ?: InetAddress.getAllByName(domain)

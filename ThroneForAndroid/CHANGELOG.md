@@ -1,3 +1,8 @@
+#### 2.0.7-quality.7
+
+* Route TPROXY's upstream traffic and system DNS through the Android VPN when it covers Throne.
+* Keep the VPN's protected transport sockets out of TPROXY and reconnect upstream sessions when the VPN changes.
+
 #### 2.0.7-quality.6
 
 * Stop the TPROXY core and release its routes when switching or closing the service.
