@@ -6,4 +6,5 @@
     <string name="tproxy_no_ingress">TPROXY requires the generated local mixed inbound at 127.0.0.1 or ::.</string>
     <string name="tproxy_root_denied">Grant Throne root access in your root manager and try again.</string>
     <string name="tproxy_root_timeout">The root process did not respond. Check access in your root manager.</string>
+    <string name="tproxy_stop_timeout">The TPROXY process did not stop in time.</string>
 </resources>

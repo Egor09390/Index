@@ -8,6 +8,7 @@ import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
 import io.throneproj.mobile.ConnectionOwner
 import io.throneproj.mobile.InterfaceUpdateListener
 import io.throneproj.mobile.LocalDNSTransport
+import io.throneproj.mobile.LogSink
 import io.throneproj.mobile.Mobile
 import io.throneproj.mobile.NetworkInterfaceIterator
 import io.throneproj.mobile.Notification
@@ -18,6 +19,7 @@ import io.throneproj.mobile.StringIterator
 import io.throneproj.mobile.TunOptions
 import io.throneproj.mobile.WIFIState
 import java.io.File
+import kotlin.concurrent.thread
 import kotlin.system.exitProcess
 
 /** Runs from the installed APK under su. The app keeps stdin open for the lifetime of the session. */
@@ -25,6 +27,7 @@ import kotlin.system.exitProcess
 internal object TProxyRootMain {
     const val READY = "THRONE_TPROXY_READY"
     const val ERROR = "THRONE_TPROXY_ERROR"
+    const val LOG = "THRONE_TPROXY_LOG"
     const val ROOT_DENIED = "root-denied"
 
     @JvmStatic
@@ -49,6 +52,13 @@ internal object TProxyRootMain {
                 workingPath = path
                 tempPath = path
             })
+            Mobile.setLogSink(object : LogSink {
+                override fun write(level: Int, message: String) {
+                    if (level <= Mobile.LogLevelWarn) {
+                        println("$LOG ${message.lineSequence().first().take(400)}")
+                    }
+                }
+            })
             target["type"] = "socks"
             target["tag"] = "throne"
             target["version"] = "5"
@@ -62,7 +72,7 @@ internal object TProxyRootMain {
                 "action" to "reject",
             )
             val config = jsonObjectOf(
-                "log" to jsonObjectOf("disabled" to true),
+                "log" to jsonObjectOf("level" to "warn"),
                 "certificate" to jsonObjectOf("store" to "none"),
                 "inbounds" to inbounds,
                 "outbounds" to JsonArray.of(target),
@@ -71,20 +81,28 @@ internal object TProxyRootMain {
             val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
             try {
                 box.start()
-                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), ::run)
+                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings()) { run(it) }
                 val cleanup = Thread { runCatching { routes.close() } }
                 Runtime.getRuntime().addShutdownHook(cleanup)
                 try {
                     routes.start()
                     println(READY)
-                    // One control pipe closed on Stop, service death, force-stop or a switch.
+                    // The app sends a stop byte. EOF also ends the session if the app dies.
                     input.read()
                 } finally {
+                    runCatching { routes.packetCounts(::run) }.onSuccess { println("$LOG $it") }
                     routes.close()
                     Runtime.getRuntime().removeShutdownHook(cleanup)
                 }
             } finally {
-                box.close()
+                // Rules have been removed. A slow native close must not keep the root process alive.
+                val shutdown = thread(name = "TPROXY core close", isDaemon = true) {
+                    runCatching { box.close() }.onFailure {
+                        println("$LOG Core close failed")
+                    }
+                }
+                shutdown.join(5_000)
+                if (shutdown.isAlive) println("$LOG Core close timed out")
             }
         } catch (error: Throwable) {
             // Do not print the session config or the mixed inbound's credentials.
@@ -92,9 +110,11 @@ internal object TProxyRootMain {
             println("$ERROR $message")
             exitProcess(1)
         }
+        // JNI can leave attached threads after main() returns.
+        exitProcess(0)
     }
 
-    private fun run(command: List<String>) {
+    private fun run(command: List<String>): String {
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         process.outputStream.close()
         val output = process.inputStream.bufferedReader().use { it.readText().trim() }
@@ -102,6 +122,7 @@ internal object TProxyRootMain {
             val name = command.first().substringAfterLast('/')
             error("$name: ${output.ifBlank { "command failed" }}")
         }
+        return output
     }
 
     // The root core only listens on loopback and dials a numeric loopback address in the unprivileged core.

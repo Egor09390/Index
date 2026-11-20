@@ -43,10 +43,15 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..a0f31ab 100644
+index 6460f87..7164acc 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,27 @@
+@@ -1,3 +1,32 @@
++#### 2.0.7-quality.6
++
++* Stop the TPROXY core and release its routes when switching or closing the service.
++* Skip reply packets in the transparent interception chain and report TCP and UDP counts in the journal.
++
 +#### 2.0.7-quality.5
 +
 +* Put the root TPROXY core cache in the app cache directory so it can start.
@@ -115,10 +120,10 @@ index 7a2bf3b..8976bc4 100644
      const val PROXY_APPS = "proxyApps"
      const val BYPASS_MODE = "bypassMode"
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-index f38a717..73be642 100644
+index f38a717..f6866bd 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-@@ -2,15 +2,59 @@ package io.nekohasekai.sagernet.bg
+@@ -2,15 +2,60 @@ package io.nekohasekai.sagernet.bg
  
  import android.app.Service
  import android.content.Intent
@@ -173,6 +178,7 @@ index f38a717..73be642 100644
 +
 +    override fun onDestroy() {
 +        tproxy?.requestStop()
++        if (data.state.canStop) stopRunner()
 +        super.onDestroy()
 +    }
 +
@@ -503,10 +509,10 @@ index 9cfc731..b9b2579 100644
          const val SERVICE_MAX_PROFILES = 100
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 new file mode 100644
-index 0000000..b68f32f
+index 0000000..750a3f4
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,146 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.os.Process
@@ -517,6 +523,7 @@ index 0000000..b68f32f
 +import io.throneproj.mobile.ConnectionOwner
 +import io.throneproj.mobile.InterfaceUpdateListener
 +import io.throneproj.mobile.LocalDNSTransport
++import io.throneproj.mobile.LogSink
 +import io.throneproj.mobile.Mobile
 +import io.throneproj.mobile.NetworkInterfaceIterator
 +import io.throneproj.mobile.Notification
@@ -527,6 +534,7 @@ index 0000000..b68f32f
 +import io.throneproj.mobile.TunOptions
 +import io.throneproj.mobile.WIFIState
 +import java.io.File
++import kotlin.concurrent.thread
 +import kotlin.system.exitProcess
 +
 +/** Runs from the installed APK under su. The app keeps stdin open for the lifetime of the session. */
@@ -534,6 +542,7 @@ index 0000000..b68f32f
 +internal object TProxyRootMain {
 +    const val READY = "THRONE_TPROXY_READY"
 +    const val ERROR = "THRONE_TPROXY_ERROR"
++    const val LOG = "THRONE_TPROXY_LOG"
 +    const val ROOT_DENIED = "root-denied"
 +
 +    @JvmStatic
@@ -558,6 +567,13 @@ index 0000000..b68f32f
 +                workingPath = path
 +                tempPath = path
 +            })
++            Mobile.setLogSink(object : LogSink {
++                override fun write(level: Int, message: String) {
++                    if (level <= Mobile.LogLevelWarn) {
++                        println("$LOG ${message.lineSequence().first().take(400)}")
++                    }
++                }
++            })
 +            target["type"] = "socks"
 +            target["tag"] = "throne"
 +            target["version"] = "5"
@@ -571,7 +587,7 @@ index 0000000..b68f32f
 +                "action" to "reject",
 +            )
 +            val config = jsonObjectOf(
-+                "log" to jsonObjectOf("disabled" to true),
++                "log" to jsonObjectOf("level" to "warn"),
 +                "certificate" to jsonObjectOf("store" to "none"),
 +                "inbounds" to inbounds,
 +                "outbounds" to JsonArray.of(target),
@@ -580,20 +596,28 @@ index 0000000..b68f32f
 +            val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
 +            try {
 +                box.start()
-+                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), ::run)
++                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings()) { run(it) }
 +                val cleanup = Thread { runCatching { routes.close() } }
 +                Runtime.getRuntime().addShutdownHook(cleanup)
 +                try {
 +                    routes.start()
 +                    println(READY)
-+                    // One control pipe closed on Stop, service death, force-stop or a switch.
++                    // The app sends a stop byte. EOF also ends the session if the app dies.
 +                    input.read()
 +                } finally {
++                    runCatching { routes.packetCounts(::run) }.onSuccess { println("$LOG $it") }
 +                    routes.close()
 +                    Runtime.getRuntime().removeShutdownHook(cleanup)
 +                }
 +            } finally {
-+                box.close()
++                // Rules have been removed. A slow native close must not keep the root process alive.
++                val shutdown = thread(name = "TPROXY core close", isDaemon = true) {
++                    runCatching { box.close() }.onFailure {
++                        println("$LOG Core close failed")
++                    }
++                }
++                shutdown.join(5_000)
++                if (shutdown.isAlive) println("$LOG Core close timed out")
 +            }
 +        } catch (error: Throwable) {
 +            // Do not print the session config or the mixed inbound's credentials.
@@ -601,9 +625,11 @@ index 0000000..b68f32f
 +            println("$ERROR $message")
 +            exitProcess(1)
 +        }
++        // JNI can leave attached threads after main() returns.
++        exitProcess(0)
 +    }
 +
-+    private fun run(command: List<String>) {
++    private fun run(command: List<String>): String {
 +        val process = ProcessBuilder(command).redirectErrorStream(true).start()
 +        process.outputStream.close()
 +        val output = process.inputStream.bufferedReader().use { it.readText().trim() }
@@ -611,6 +637,7 @@ index 0000000..b68f32f
 +            val name = command.first().substringAfterLast('/')
 +            error("$name: ${output.ifBlank { "command failed" }}")
 +        }
++        return output
 +    }
 +
 +    // The root core only listens on loopback and dials a numeric loopback address in the unprivileged core.
@@ -634,10 +661,10 @@ index 0000000..b68f32f
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
 new file mode 100644
-index 0000000..fb3d42b
+index 0000000..0c8efb2
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,133 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import java.io.Closeable
@@ -703,6 +730,9 @@ index 0000000..fb3d42b
 +        outputRule("-d", family.multicast, "-j", "RETURN")
 +        if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
 +
++        // Replies from a transparent socket must not enter the listener again.
++        run(family.firewall("-A", prerouting, "-m", "conntrack", "--ctdir", "REPLY", "-j", "RETURN"))
++
 +        // DNS to a LAN resolver still reaches Throne's DNS route before the LAN exclusions.
 +        for (protocol in listOf("tcp", "udp")) {
 +            outputRule("-p", protocol, "--dport", "53", "-j", "MARK", "--set-xmark", MARK)
@@ -718,6 +748,22 @@ index 0000000..fb3d42b
 +                "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
 +            ))
 +        }
++    }
++
++    /** Report counts from our own rules and omit addresses and packet data. */
++    fun packetCounts(query: (List<String>) -> String): String = families.joinToString(
++        prefix = "Packets intercepted by TPROXY: ",
++    ) { family ->
++        val listing = query(family.firewall("-L", prerouting, "-n", "-v", "-x"))
++        val counts = listing.lineSequence().mapNotNull { line ->
++            val fields = line.trim().split(WHITESPACE, limit = 5)
++            if (fields.getOrNull(2) == "TPROXY") {
++                val protocol = fields.getOrNull(3)
++                val count = fields.firstOrNull()?.toLongOrNull()
++                if (protocol != null && count != null) "$protocol=$count" else null
++            } else null
++        }.toList()
++        "IPv${family.selector.last()} ${counts.joinToString(" ")}"
 +    }
 +
 +    private fun hook(family: Family, chain: String, vararg rule: String) {
@@ -747,16 +793,17 @@ index 0000000..fb3d42b
 +    }
 +
 +    private companion object {
++        val WHITESPACE = Regex("\\s+")
 +        const val MARK = "0x10000000/0x10000000"
 +        const val PRIORITY = "9000"
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 new file mode 100644
-index 0000000..4cf29b1
+index 0000000..7e4a275
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,137 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.content.Context
@@ -774,6 +821,7 @@ index 0000000..4cf29b1
 +import java.util.concurrent.CountDownLatch
 +import java.util.concurrent.TimeUnit
 +import kotlin.concurrent.thread
++import moe.matsuri.nb4a.utils.CoreLog
 +
 +internal class TProxySession(
 +    private val context: Context,
@@ -783,7 +831,7 @@ index 0000000..4cf29b1
 +    private val ready = CountDownLatch(1)
 +    private val stopped = CountDownLatch(1)
 +    private val ports = PortLease()
-+    private var process: java.lang.Process? = null
++    @Volatile private var process: java.lang.Process? = null
 +
 +    @Volatile private var connected = false
 +    @Volatile private var closing = false
@@ -840,6 +888,9 @@ index 0000000..4cf29b1
 +                            line.startsWith("${TProxyRootMain.ERROR} ") -> {
 +                                errorMessage = line.substringAfter(' ').take(400)
 +                            }
++                            line.startsWith("${TProxyRootMain.LOG} ") -> {
++                                CoreLog.write("[TPROXY] ${line.substringAfter(' ')}")
++                            }
 +                        }
 +                    }
 +                }
@@ -866,14 +917,21 @@ index 0000000..4cf29b1
 +
 +    fun requestStop() {
 +        closing = true
-+        process?.outputStream?.let { runCatching { it.close() } }
++        process?.outputStream?.let { stream ->
++            runCatching {
++                stream.use {
++                    it.write('\n'.code)
++                    it.flush()
++                }
++            }
++        }
 +    }
 +
 +    override fun close() {
 +        requestStop()
 +        try {
 +            if (process != null && !stopped.await(15, TimeUnit.SECONDS)) {
-+                error(context.getString(R.string.tproxy_root_timeout))
++                error(context.getString(R.string.tproxy_stop_timeout))
 +            }
 +            if (connected) errorMessage?.let { error(context.getString(R.string.tproxy_start_failed, it)) }
 +        } finally {
@@ -1559,10 +1617,10 @@ index 9cdeb91..50d673b 100644
  </resources>
 diff --git a/app/src/main/res/values-ru/tproxy.xml b/app/src/main/res/values-ru/tproxy.xml
 new file mode 100644
-index 0000000..fda02d5
+index 0000000..8638a93
 --- /dev/null
 +++ b/app/src/main/res/values-ru/tproxy.xml
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,10 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<resources>
 +    <string name="service_mode_tproxy">TPROXY (root)</string>
@@ -1571,6 +1629,7 @@ index 0000000..fda02d5
 +    <string name="tproxy_no_ingress">TPROXY нужен локальный смешанный вход на 127.0.0.1 или ::.</string>
 +    <string name="tproxy_root_denied">Выдай Throne root-доступ в менеджере root и повтори.</string>
 +    <string name="tproxy_root_timeout">Процесс с root не ответил. Проверь доступ в менеджере root.</string>
++    <string name="tproxy_stop_timeout">Процесс TPROXY не завершился вовремя.</string>
 +</resources>
 diff --git a/app/src/main/res/values-tr/arrays.xml b/app/src/main/res/values-tr/arrays.xml
 index e500d30..e762829 100644
@@ -1727,10 +1786,10 @@ index 8b6872e..a7a0a26 100644
  </resources>
 diff --git a/app/src/main/res/values/tproxy.xml b/app/src/main/res/values/tproxy.xml
 new file mode 100644
-index 0000000..bb712d8
+index 0000000..487816d
 --- /dev/null
 +++ b/app/src/main/res/values/tproxy.xml
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,10 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<resources>
 +    <string name="service_mode_tproxy">TPROXY (root)</string>
@@ -1739,13 +1798,14 @@ index 0000000..bb712d8
 +    <string name="tproxy_no_ingress">TPROXY requires the generated local mixed inbound at 127.0.0.1 or ::.</string>
 +    <string name="tproxy_root_denied">Grant Throne root access in your root manager and try again.</string>
 +    <string name="tproxy_root_timeout">The root process did not respond. Check access in your root manager.</string>
++    <string name="tproxy_stop_timeout">The TPROXY process did not stop in time.</string>
 +</resources>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
-index 0000000..cd96eb2
+index 0000000..047d8eb
 --- /dev/null
 +++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,76 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import org.junit.Assert.assertEquals
@@ -1776,6 +1836,38 @@ index 0000000..cd96eb2
 +    }
 +
 +    @Test
++    fun preroutingSkipsRepliesBeforeApplyingTproxy() {
++        val commands = mutableListOf<List<String>>()
++        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
++
++        for (name in listOf("iptables", "ip6tables")) {
++            val rules = commands.filter {
++                it.first().endsWith("/$name") && "-A" in it && "THRONE_TPROXY_IN" in it
++            }
++            assertEquals(3, rules.size)
++            assertTrue(rules.first().takeLast(4) == listOf("--ctdir", "REPLY", "-j", "RETURN"))
++            assertTrue(rules.drop(1).all { "TPROXY" in it })
++        }
++    }
++
++    @Test
++    fun packetCountsReportOnlyTransparentProxyRules() {
++        val routes = TProxyRoutes(10231, 30080, emptyList()) { }
++        val stats = routes.packetCounts { command ->
++            assertTrue(command.takeLast(5) == listOf("-L", "THRONE_TPROXY_IN", "-n", "-v", "-x"))
++            val v4 = command.first().endsWith("/iptables")
++            """
++            Chain THRONE_TPROXY_IN (1 references)
++            pkts bytes target prot opt in out source destination
++               99  5550 RETURN all  --  lo * 0.0.0.0/0 0.0.0.0/0
++               ${if (v4) 12 else 0}  1024 TPROXY tcp --  lo * 0.0.0.0/0 0.0.0.0/0
++               ${if (v4) 3 else 8}  512 TPROXY udp --  lo * 0.0.0.0/0 0.0.0.0/0
++            """.trimIndent()
++        }
++        assertEquals("Packets intercepted by TPROXY: IPv4 tcp=12 udp=3, IPv6 tcp=0 udp=8", stats)
++    }
++
++    @Test
 +    fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
 +        val commands = mutableListOf<List<String>>()
 +        val failure = IllegalStateException("test failure")
@@ -1791,7 +1883,7 @@ index 0000000..cd96eb2
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..e2034c4 100644
+index 751051e..37c6091 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -1799,7 +1891,7 @@ index 751051e..e2034c4 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.5
-+VERSION_CODE=118
++VERSION_NAME=2.0.7-quality.6
++VERSION_CODE=119
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

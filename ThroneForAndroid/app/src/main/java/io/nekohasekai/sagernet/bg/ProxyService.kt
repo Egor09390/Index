@@ -52,6 +52,7 @@ class ProxyService : Service(), BaseService.Interface {
 
     override fun onDestroy() {
         tproxy?.requestStop()
+        if (data.state.canStop) stopRunner()
         super.onDestroy()
     }
 

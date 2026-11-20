@@ -63,6 +63,9 @@ internal class TProxyRoutes(
         outputRule("-d", family.multicast, "-j", "RETURN")
         if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
 
+        // Replies from a transparent socket must not enter the listener again.
+        run(family.firewall("-A", prerouting, "-m", "conntrack", "--ctdir", "REPLY", "-j", "RETURN"))
+
         // DNS to a LAN resolver still reaches Throne's DNS route before the LAN exclusions.
         for (protocol in listOf("tcp", "udp")) {
             outputRule("-p", protocol, "--dport", "53", "-j", "MARK", "--set-xmark", MARK)
@@ -78,6 +81,22 @@ internal class TProxyRoutes(
                 "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
             ))
         }
+    }
+
+    /** Report counts from our own rules and omit addresses and packet data. */
+    fun packetCounts(query: (List<String>) -> String): String = families.joinToString(
+        prefix = "Packets intercepted by TPROXY: ",
+    ) { family ->
+        val listing = query(family.firewall("-L", prerouting, "-n", "-v", "-x"))
+        val counts = listing.lineSequence().mapNotNull { line ->
+            val fields = line.trim().split(WHITESPACE, limit = 5)
+            if (fields.getOrNull(2) == "TPROXY") {
+                val protocol = fields.getOrNull(3)
+                val count = fields.firstOrNull()?.toLongOrNull()
+                if (protocol != null && count != null) "$protocol=$count" else null
+            } else null
+        }.toList()
+        "IPv${family.selector.last()} ${counts.joinToString(" ")}"
     }
 
     private fun hook(family: Family, chain: String, vararg rule: String) {
@@ -107,6 +126,7 @@ internal class TProxyRoutes(
     }
 
     private companion object {
+        val WHITESPACE = Regex("\\s+")
         const val MARK = "0x10000000/0x10000000"
         const val PRIORITY = "9000"
     }

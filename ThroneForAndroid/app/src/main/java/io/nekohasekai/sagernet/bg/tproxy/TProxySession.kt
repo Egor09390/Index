@@ -15,6 +15,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import moe.matsuri.nb4a.utils.CoreLog
 
 internal class TProxySession(
     private val context: Context,
@@ -24,7 +25,7 @@ internal class TProxySession(
     private val ready = CountDownLatch(1)
     private val stopped = CountDownLatch(1)
     private val ports = PortLease()
-    private var process: java.lang.Process? = null
+    @Volatile private var process: java.lang.Process? = null
 
     @Volatile private var connected = false
     @Volatile private var closing = false
@@ -81,6 +82,9 @@ internal class TProxySession(
                             line.startsWith("${TProxyRootMain.ERROR} ") -> {
                                 errorMessage = line.substringAfter(' ').take(400)
                             }
+                            line.startsWith("${TProxyRootMain.LOG} ") -> {
+                                CoreLog.write("[TPROXY] ${line.substringAfter(' ')}")
+                            }
                         }
                     }
                 }
@@ -107,14 +111,21 @@ internal class TProxySession(
 
     fun requestStop() {
         closing = true
-        process?.outputStream?.let { runCatching { it.close() } }
+        process?.outputStream?.let { stream ->
+            runCatching {
+                stream.use {
+                    it.write('\n'.code)
+                    it.flush()
+                }
+            }
+        }
     }
 
     override fun close() {
         requestStop()
         try {
             if (process != null && !stopped.await(15, TimeUnit.SECONDS)) {
-                error(context.getString(R.string.tproxy_root_timeout))
+                error(context.getString(R.string.tproxy_stop_timeout))
             }
             if (connected) errorMessage?.let { error(context.getString(R.string.tproxy_start_failed, it)) }
         } finally {

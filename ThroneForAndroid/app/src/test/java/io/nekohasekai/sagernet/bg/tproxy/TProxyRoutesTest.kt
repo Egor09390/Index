@@ -28,6 +28,38 @@ class TProxyRoutesTest {
     }
 
     @Test
+    fun preroutingSkipsRepliesBeforeApplyingTproxy() {
+        val commands = mutableListOf<List<String>>()
+        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
+
+        for (name in listOf("iptables", "ip6tables")) {
+            val rules = commands.filter {
+                it.first().endsWith("/$name") && "-A" in it && "THRONE_TPROXY_IN" in it
+            }
+            assertEquals(3, rules.size)
+            assertTrue(rules.first().takeLast(4) == listOf("--ctdir", "REPLY", "-j", "RETURN"))
+            assertTrue(rules.drop(1).all { "TPROXY" in it })
+        }
+    }
+
+    @Test
+    fun packetCountsReportOnlyTransparentProxyRules() {
+        val routes = TProxyRoutes(10231, 30080, emptyList()) { }
+        val stats = routes.packetCounts { command ->
+            assertTrue(command.takeLast(5) == listOf("-L", "THRONE_TPROXY_IN", "-n", "-v", "-x"))
+            val v4 = command.first().endsWith("/iptables")
+            """
+            Chain THRONE_TPROXY_IN (1 references)
+            pkts bytes target prot opt in out source destination
+               99  5550 RETURN all  --  lo * 0.0.0.0/0 0.0.0.0/0
+               ${if (v4) 12 else 0}  1024 TPROXY tcp --  lo * 0.0.0.0/0 0.0.0.0/0
+               ${if (v4) 3 else 8}  512 TPROXY udp --  lo * 0.0.0.0/0 0.0.0.0/0
+            """.trimIndent()
+        }
+        assertEquals("Packets intercepted by TPROXY: IPv4 tcp=12 udp=3, IPv6 tcp=0 udp=8", stats)
+    }
+
+    @Test
     fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
         val commands = mutableListOf<List<String>>()
         val failure = IllegalStateException("test failure")

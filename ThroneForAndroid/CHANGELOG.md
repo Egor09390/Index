@@ -1,3 +1,8 @@
+#### 2.0.7-quality.6
+
+* Stop the TPROXY core and release its routes when switching or closing the service.
+* Skip reply packets in the transparent interception chain and report TCP and UDP counts in the journal.
+
 #### 2.0.7-quality.5
 
 * Put the root TPROXY core cache in the app cache directory so it can start.
