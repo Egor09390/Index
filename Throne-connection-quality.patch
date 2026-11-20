@@ -43,10 +43,15 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..7acd6a7 100644
+index 6460f87..8679811 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,10 @@
+@@ -1,3 +1,15 @@
++#### 2.0.7-quality.2
++
++* Add a TPROXY (root) service mode for device TCP and UDP on IPv4 and IPv6.
++* Require root and kernel TPROXY support. Restore the session's firewall chains and policy routes when it stops.
++
 +#### 2.0.7-quality.1
 +
 +* Add a sequential connection quality test for the current group.
@@ -57,6 +62,88 @@ index 6460f87..7acd6a7 100644
  #### 2.0.7
  
  * Add Service check **1**
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/Constants.kt b/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
+index 7a2bf3b..8976bc4 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
+@@ -14,6 +14,7 @@ object Key {
+     const val SERVICE_MODE = "serviceMode"
+     const val MODE_VPN = "vpn"
+     const val MODE_PROXY = "proxy"
++    const val MODE_TPROXY = "tproxy"
+ 
+     const val PROXY_APPS = "proxyApps"
+     const val BYPASS_MODE = "bypassMode"
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
+index f38a717..ec419ad 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
+@@ -2,6 +2,14 @@ package io.nekohasekai.sagernet.bg
+ 
+ import android.app.Service
+ import android.content.Intent
++import io.nekohasekai.sagernet.Key
++import io.nekohasekai.sagernet.R
++import io.nekohasekai.sagernet.bg.tproxy.TProxySession
++import io.nekohasekai.sagernet.database.DataStore
++import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.runInterruptible
++import kotlinx.coroutines.withContext
+ 
+ class ProxyService : Service(), BaseService.Interface {
+     override val data = BaseService.Data(this)
+@@ -11,6 +19,37 @@ class ProxyService : Service(), BaseService.Interface {
+ 
+     override var upstreamInterfaceName: String? = null
+ 
++    @Volatile
++    private var tproxy: TProxySession? = null
++
++    override suspend fun startProcesses() {
++        val rootMode = DataStore.serviceMode == Key.MODE_TPROXY
++        super.startProcesses()
++        if (!rootMode) return
++        val proxy = checkNotNull(data.proxy)
++        val session = TProxySession(this, proxy.config.coreConfig) {
++            runOnMainDispatcher {
++                if (data.proxy === proxy && data.state.canStop) failRunner(getString(R.string.tproxy_stopped))
++            }
++        }
++        tproxy = session
++        runInterruptible { session.start() }
++    }
++
++    override suspend fun killProcesses(): Throwable? {
++        val session = tproxy
++        tproxy = null
++        val error = withContext(Dispatchers.IO) { runCatching { session?.close() }.exceptionOrNull() }
++        val coreError = super.killProcesses()
++        if (error != null && coreError != null) error.addSuppressed(coreError)
++        return error ?: coreError
++    }
++
++    override fun onDestroy() {
++        tproxy?.requestStop()
++        super.onDestroy()
++    }
++
+     override fun onBind(intent: Intent) = super.onBind(intent)
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
+         super<BaseService.Interface>.onStartCommand(intent, flags, startId)
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/SagerConnection.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/SagerConnection.kt
+index 86086c0..2e0e576 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/bg/SagerConnection.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/SagerConnection.kt
+@@ -25,7 +25,7 @@ class SagerConnection(
+     companion object {
+         val serviceClass
+             get() = when (DataStore.serviceMode) {
+-                Key.MODE_PROXY -> ProxyService::class
++                Key.MODE_PROXY, Key.MODE_TPROXY -> ProxyService::class
+                 Key.MODE_VPN -> VpnService::class
+                 else -> throw UnknownError()
+             }.java
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
 new file mode 100644
 index 0000000..cf4c61d
@@ -345,6 +432,372 @@ index 9cfc731..b9b2579 100644
  
          /** kMaxServiceCheckProfiles: every profile sends about 20 requests to third-party services. */
          const val SERVICE_MAX_PROFILES = 100
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
+new file mode 100644
+index 0000000..adb393a
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
+@@ -0,0 +1,112 @@
++package io.nekohasekai.sagernet.bg.tproxy
++
++import android.os.Process
++import androidx.annotation.Keep
++import io.nekohasekai.sagernet.outbound.json.JsonArray
++import io.nekohasekai.sagernet.outbound.json.JsonInput
++import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
++import io.throneproj.mobile.ConnectionOwner
++import io.throneproj.mobile.InterfaceUpdateListener
++import io.throneproj.mobile.LocalDNSTransport
++import io.throneproj.mobile.Mobile
++import io.throneproj.mobile.NetworkInterfaceIterator
++import io.throneproj.mobile.Notification
++import io.throneproj.mobile.PlatformInterface
++import io.throneproj.mobile.StartOptions
++import io.throneproj.mobile.StringIterator
++import io.throneproj.mobile.TunOptions
++import io.throneproj.mobile.WIFIState
++import kotlin.system.exitProcess
++
++/** Runs from the installed APK under su. The app keeps stdin open for the lifetime of the session. */
++@Keep
++internal object TProxyRootMain {
++    const val READY = "THRONE_TPROXY_READY"
++    const val ERROR = "THRONE_TPROXY_ERROR"
++    const val ROOT_DENIED = "root-denied"
++
++    @JvmStatic
++    fun main(args: Array<String>) {
++        try {
++            check(Process.myUid() == 0) { ROOT_DENIED }
++            val input = System.`in`.bufferedReader()
++            val options = input.readLine()?.let(JsonInput::parseObject) ?: return
++            val uid = options.int("uid")
++            val port = options.int("port")
++            val target = options.obj("target")
++            check(uid > 0 && port in 1024..65535 && target.int("server_port") in 1..65535)
++            check(target.string("server") == "127.0.0.1")
++            target["type"] = "socks"
++            target["tag"] = "throne"
++            target["version"] = "5"
++
++            val inbounds = JsonArray()
++            for ((name, address) in listOf("ipv4" to "127.0.0.1", "ipv6" to "::1")) {
++                inbounds.add(jsonObjectOf("type" to "tproxy", "tag" to name, "listen" to address, "listen_port" to port))
++            }
++            val rejectLoopback = jsonObjectOf(
++                "ip_cidr" to JsonArray.of("127.0.0.0/8", "::1/128", "::ffff:127.0.0.0/104"),
++                "action" to "reject",
++            )
++            val config = jsonObjectOf(
++                "log" to jsonObjectOf("disabled" to true),
++                "certificate" to jsonObjectOf("store" to "none"),
++                "inbounds" to inbounds,
++                "outbounds" to JsonArray.of(target),
++                "route" to jsonObjectOf("rules" to JsonArray.of(rejectLoopback), "final" to "throne"),
++            )
++            val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
++            try {
++                box.start()
++                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), ::run)
++                val cleanup = Thread { runCatching { routes.close() } }
++                Runtime.getRuntime().addShutdownHook(cleanup)
++                try {
++                    routes.start()
++                    println(READY)
++                    // One control pipe closed on Stop, service death, force-stop or a switch.
++                    input.read()
++                } finally {
++                    routes.close()
++                    Runtime.getRuntime().removeShutdownHook(cleanup)
++                }
++            } finally {
++                box.close()
++            }
++        } catch (error: Throwable) {
++            // Do not print the session config or the mixed inbound's credentials.
++            val message = (error.message ?: error.javaClass.simpleName).lineSequence().first().take(400)
++            println("$ERROR $message")
++            exitProcess(1)
++        }
++    }
++
++    private fun run(command: List<String>) {
++        val process = ProcessBuilder(command).redirectErrorStream(true).start()
++        process.outputStream.close()
++        val output = process.inputStream.bufferedReader().use { it.readText().trim() }
++        if (process.waitFor() != 0) {
++            val name = command.first().substringAfterLast('/')
++            error("$name: ${output.ifBlank { "command failed" }}")
++        }
++    }
++
++    // The root core only listens on loopback and dials a numeric loopback address in the unprivileged core.
++    private object Platform : PlatformInterface {
++        override fun localDNSTransport(): LocalDNSTransport? = null
++        override fun usePlatformAutoDetectInterfaceControl() = false
++        override fun autoDetectInterfaceControl(fd: Int) = Unit
++        override fun openTun(options: TunOptions): Int = error("No TUN in TPROXY")
++        override fun useProcFS() = false
++        override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String, sourcePort: Int, destinationAddress: String, destinationPort: Int): ConnectionOwner =
++            error("Connection lookup unavailable")
++        override fun packageNamesByUid(uid: Int): StringIterator? = null
++        override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) = Unit
++        override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) = Unit
++        override fun getInterfaces(): NetworkInterfaceIterator? = null
++        override fun readWIFIState(): WIFIState? = null
++        override fun clearDNSCache() = Unit
++        override fun sendNotification(notification: Notification) = Unit
++        override fun cancelNotification(identifier: String, typeID: Int) = Unit
++    }
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
+new file mode 100644
+index 0000000..fb3d42b
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
+@@ -0,0 +1,113 @@
++package io.nekohasekai.sagernet.bg.tproxy
++
++import java.io.Closeable
++
++/** Owns only this session's policy rules, routes and mangle chains. */
++internal class TProxyRoutes(
++    private val uid: Int,
++    private val port: Int,
++    private val bypassRanges: List<String>,
++    private val run: (List<String>) -> Unit,
++) : Closeable {
++    private val undo = ArrayDeque<List<String>>()
++    private val output = "THRONE_TPROXY_OUT"
++    private val prerouting = "THRONE_TPROXY_IN"
++    private val table = (100_000L + uid).toString()
++
++    private data class Family(
++        val selector: String,
++        val firewall: String,
++        val localhost: String,
++        val multicast: String,
++        val defaultRoute: String,
++    ) {
++        fun firewall(vararg args: String) = listOf("/system/bin/$firewall", "-w", "2", "-t", "mangle") + args
++        fun ip(vararg args: String) = listOf("/system/bin/ip", selector) + args
++    }
++
++    private val families = listOf(
++        Family("-4", "iptables", "127.0.0.1", "224.0.0.0/4", "0.0.0.0/0"),
++        Family("-6", "ip6tables", "::1", "ff00::/8", "::/0"),
++    )
++
++    @Synchronized
++    fun start() {
++        check(undo.isEmpty())
++        try {
++            for (family in families) prepare(family)
++            for (family in families) {
++                hook(family, "PREROUTING", "-i", "lo", "-m", "mark", "--mark", MARK, "-j", prerouting)
++            }
++            for (family in families) hook(family, "OUTPUT", "-j", output)
++        } catch (error: Throwable) {
++            runCatching { close() }.exceptionOrNull()?.let(error::addSuppressed)
++            throw error
++        }
++    }
++
++    private fun prepare(family: Family) {
++        for (chain in listOf(output, prerouting)) {
++            run(family.firewall("-N", chain))
++            undo.addLast(family.firewall("-X", chain))
++            undo.addLast(family.firewall("-F", chain))
++        }
++        val route = arrayOf("local", family.defaultRoute, "dev", "lo", "table", table)
++        apply(family.ip("route", "add", *route), family.ip("route", "del", *route))
++        val rule = arrayOf("pref", PRIORITY, "fwmark", MARK, "lookup", table)
++        apply(family.ip("rule", "add", *rule), family.ip("rule", "del", *rule))
++
++        fun outputRule(vararg args: String) = run(family.firewall("-A", output, *args))
++        outputRule("-o", "lo", "-j", "RETURN")
++        outputRule("-m", "owner", "--uid-owner", "0", "-j", "RETURN")
++        outputRule("-m", "owner", "--uid-owner", uid.toString(), "-j", "RETURN")
++        outputRule("-d", family.multicast, "-j", "RETURN")
++        if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
++
++        // DNS to a LAN resolver still reaches Throne's DNS route before the LAN exclusions.
++        for (protocol in listOf("tcp", "udp")) {
++            outputRule("-p", protocol, "--dport", "53", "-j", "MARK", "--set-xmark", MARK)
++        }
++        outputRule("-m", "mark", "--mark", MARK, "-j", "RETURN")
++        for (range in bypassRanges) {
++            if (range.contains(':') == (family.selector == "-6")) outputRule("-d", range, "-j", "RETURN")
++        }
++        for (protocol in listOf("tcp", "udp")) {
++            outputRule("-p", protocol, "-j", "MARK", "--set-xmark", MARK)
++            run(family.firewall(
++                "-A", prerouting, "-p", protocol, "-j", "TPROXY",
++                "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
++            ))
++        }
++    }
++
++    private fun hook(family: Family, chain: String, vararg rule: String) {
++        apply(family.firewall("-I", chain, "1", *rule), family.firewall("-D", chain, *rule))
++    }
++
++    private fun apply(command: List<String>, remove: List<String>) {
++        run(command)
++        undo.addLast(remove)
++    }
++
++    @Synchronized
++    override fun close() {
++        var failure: Throwable? = null
++        val failedCommands = ArrayDeque<List<String>>()
++        while (undo.isNotEmpty()) {
++            val command = undo.removeLast()
++            try {
++                run(command)
++            } catch (error: Throwable) {
++                failedCommands.addFirst(command)
++                if (failure == null) failure = error else failure.addSuppressed(error)
++            }
++        }
++        undo.addAll(failedCommands)
++        failure?.let { throw it }
++    }
++
++    private companion object {
++        const val MARK = "0x10000000/0x10000000"
++        const val PRIORITY = "9000"
++    }
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
+new file mode 100644
+index 0000000..c4232ec
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
+@@ -0,0 +1,123 @@
++package io.nekohasekai.sagernet.bg.tproxy
++
++import android.content.Context
++import android.os.Process
++import io.nekohasekai.sagernet.R
++import io.nekohasekai.sagernet.database.DataStore
++import io.nekohasekai.sagernet.outbound.config.PortLease
++import io.nekohasekai.sagernet.outbound.json.JsonArray
++import io.nekohasekai.sagernet.outbound.json.JsonInput
++import io.nekohasekai.sagernet.outbound.json.JsonObject
++import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
++import java.io.Closeable
++import java.io.IOException
++import java.io.File
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++import kotlin.concurrent.thread
++
++internal class TProxySession(
++    private val context: Context,
++    private val coreConfig: String,
++    private val onUnexpectedStop: () -> Unit,
++) : Closeable {
++    private val ready = CountDownLatch(1)
++    private val stopped = CountDownLatch(1)
++    private val ports = PortLease()
++    private var process: java.lang.Process? = null
++
++    @Volatile private var connected = false
++    @Volatile private var closing = false
++    @Volatile private var errorMessage: String? = null
++
++    fun start() {
++        val mixed = JsonInput.parseObject(coreConfig).array("inbounds")
++            .mapNotNull { it as? JsonObject }
++            .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
++        if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
++            mixed.int("listen_port") !in 1..65535) {
++            error(context.getString(R.string.tproxy_no_ingress))
++        }
++
++        val target = jsonObjectOf("server" to "127.0.0.1", "server_port" to mixed.int("listen_port"))
++        (mixed.array("users").firstOrNull() as? JsonObject)?.let {
++            target["username"] = it.string("username")
++            target["password"] = it.string("password")
++        }
++        val port = ports.reserve(1).single()
++        check(port >= 1024)
++        val bypass = JsonArray()
++        if (!DataStore.disablePrivateRangeBypass) DataStore.vpnPrivateRanges.forEach { bypass.add(it) }
++        // These are interface-local even when the user includes private unicast networks in the proxy.
++        bypass.add("169.254.0.0/16")
++        bypass.add("fe80::/10")
++        val options = jsonObjectOf(
++            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
++        )
++
++        val appInfo = context.applicationInfo
++        val abiRuntime = if (Process.is64Bit()) "/system/bin/app_process64" else "/system/bin/app_process32"
++        val runtime = if (File(abiRuntime).canExecute()) abiRuntime else "/system/bin/app_process"
++        val command = "export CLASSPATH=${quote(appInfo.sourceDir)} LD_LIBRARY_PATH=${quote(appInfo.nativeLibraryDir)}; " +
++            "exec $runtime /system/bin ${TProxyRootMain::class.java.name}"
++        val child = try {
++            ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
++        } catch (_: IOException) {
++            error(context.getString(R.string.tproxy_root_denied))
++        }
++        process = child
++        thread(name = "TPROXY root process", isDaemon = true) {
++            try {
++                child.inputStream.bufferedReader().useLines { lines ->
++                    for (line in lines) {
++                        when {
++                            line == TProxyRootMain.READY -> {
++                                connected = true
++                                ready.countDown()
++                            }
++                            line.startsWith("${TProxyRootMain.ERROR} ") -> {
++                                errorMessage = line.substringAfter(' ').take(400)
++                            }
++                        }
++                    }
++                }
++            } finally {
++                stopped.countDown()
++                ready.countDown()
++                if (connected && !closing) onUnexpectedStop()
++            }
++        }
++
++        try {
++            child.outputStream.write((options.toCompact() + "\n").toByteArray(Charsets.UTF_8))
++            child.outputStream.flush()
++        } catch (_: IOException) {
++            error(context.getString(R.string.tproxy_root_denied))
++        }
++        if (!ready.await(30, TimeUnit.SECONDS)) error(context.getString(R.string.tproxy_root_timeout))
++        if (!connected || stopped.count == 0L) {
++            val message = errorMessage?.takeUnless { it == TProxyRootMain.ROOT_DENIED }
++                ?: context.getString(R.string.tproxy_root_denied)
++            error(context.getString(R.string.tproxy_start_failed, message))
++        }
++    }
++
++    fun requestStop() {
++        closing = true
++        process?.outputStream?.let { runCatching { it.close() } }
++    }
++
++    override fun close() {
++        requestStop()
++        try {
++            if (process != null && !stopped.await(15, TimeUnit.SECONDS)) {
++                error(context.getString(R.string.tproxy_root_timeout))
++            }
++            if (connected) errorMessage?.let { error(context.getString(R.string.tproxy_start_failed, it)) }
++        } finally {
++            ports.close()
++        }
++    }
++
++    private fun quote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
++}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
 index 9eebe31..bf95b02 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
@@ -445,6 +898,22 @@ index 9d0d649..150ee35 100644
          val instance by lazy {
              SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
              val db = buildProfileDatabase()
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ktx/Nets.kt b/app/src/main/java/io/nekohasekai/sagernet/ktx/Nets.kt
+index 2e06850..b6e89a9 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ktx/Nets.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ktx/Nets.kt
+@@ -43,7 +43,10 @@ class HttpFetchResult(val body: String, private val headers: Headers) {
+ fun appUserAgent(): String = DataStore.userAgent2.ifBlank { USER_AGENT }
+ 
+ /** App requests use the mixed inbound with net_use_proxy or in proxy service mode (HTTPRequestHelper.cpp:26). */
+-fun appRequestsViaProxy(): Boolean = DataStore.netUseProxy || DataStore.serviceMode == Key.MODE_PROXY
++fun appRequestsViaProxy(): Boolean = DataStore.netUseProxy || when (DataStore.serviceMode) {
++    Key.MODE_PROXY, Key.MODE_TPROXY -> true
++    else -> false
++}
+ 
+ /**
+  * Whether an app request that would use the proxy fails while no profile runs: only with net_use_proxy (or a
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
 index d4944bf..5917bfe 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
@@ -712,6 +1181,44 @@ index 9cdeb91..50d673b 100644
      <string name="route_outbound_chain_selector">Профиль маршрутизации направляет трафик в %1$s, где есть автовыбор; такую цепочку можно только запустить, но не использовать в правилах маршрутизации</string>
 +    <string name="connection_quality_test">Качество соединения</string>
  </resources>
+diff --git a/app/src/main/res/values-ru/tproxy.xml b/app/src/main/res/values-ru/tproxy.xml
+new file mode 100644
+index 0000000..fda02d5
+--- /dev/null
++++ b/app/src/main/res/values-ru/tproxy.xml
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="service_mode_tproxy">TPROXY (root)</string>
++    <string name="tproxy_start_failed">Не удалось запустить TPROXY: %s</string>
++    <string name="tproxy_stopped">Процесс TPROXY с root остановился.</string>
++    <string name="tproxy_no_ingress">TPROXY нужен локальный смешанный вход на 127.0.0.1 или ::.</string>
++    <string name="tproxy_root_denied">Выдай Throne root-доступ в менеджере root и повтори.</string>
++    <string name="tproxy_root_timeout">Процесс с root не ответил. Проверь доступ в менеджере root.</string>
++</resources>
+diff --git a/app/src/main/res/values/arrays.xml b/app/src/main/res/values/arrays.xml
+index 9a2c643..2c4d4cd 100644
+--- a/app/src/main/res/values/arrays.xml
++++ b/app/src/main/res/values/arrays.xml
+@@ -101,16 +101,12 @@
+     <string-array name="service_modes">
+         <item>@string/service_mode_vpn</item>
+         <item>@string/service_mode_proxy</item>
+-        <!--
+-                <item>@string/service_mode_transproxy</item>
+-        -->
++        <item>@string/service_mode_tproxy</item>
+     </string-array>
+     <string-array name="service_mode_values">
+         <item>vpn</item>
+         <item>proxy</item>
+-        <!--
+-                <item>transproxy</item>
+-        -->
++        <item>tproxy</item>
+     </string-array>
+ 
+     <string-array name="xhttp_mode_entry">
 diff --git a/app/src/main/res/values/connection_quality.xml b/app/src/main/res/values/connection_quality.xml
 new file mode 100644
 index 0000000..4e214b0
@@ -732,8 +1239,73 @@ index 8b6872e..a7a0a26 100644
 +    <string name="connection_quality_test">Connection quality</string>
 +    <string name="connection_quality_score" translatable="false">%1$d/100</string>
  </resources>
+diff --git a/app/src/main/res/values/tproxy.xml b/app/src/main/res/values/tproxy.xml
+new file mode 100644
+index 0000000..bb712d8
+--- /dev/null
++++ b/app/src/main/res/values/tproxy.xml
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="service_mode_tproxy">TPROXY (root)</string>
++    <string name="tproxy_start_failed">TPROXY could not start: %s</string>
++    <string name="tproxy_stopped">The root TPROXY process stopped.</string>
++    <string name="tproxy_no_ingress">TPROXY requires the generated local mixed inbound at 127.0.0.1 or ::.</string>
++    <string name="tproxy_root_denied">Grant Throne root access in your root manager and try again.</string>
++    <string name="tproxy_root_timeout">The root process did not respond. Check access in your root manager.</string>
++</resources>
+diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
+new file mode 100644
+index 0000000..cd96eb2
+--- /dev/null
++++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
+@@ -0,0 +1,44 @@
++package io.nekohasekai.sagernet.bg.tproxy
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class TProxyRoutesTest {
++    @Test
++    fun stopReversesPolicyAndFirewallHooks() {
++        val commands = mutableListOf<List<String>>()
++        val routes = TProxyRoutes(10231, 30080, listOf("10.0.0.0/8", "fc00::/7"), commands::add)
++        routes.start()
++        val beforeClose = commands.size
++        assertEquals(4, commands.count { "TPROXY" in it && "--on-port" in it })
++        assertEquals(2, commands.count { "--uid-owner" in it && "10231" in it })
++
++        routes.close()
++
++        val cleanup = commands.drop(beforeClose)
++        assertTrue(cleanup.take(2).all { "-D" in it && "OUTPUT" in it })
++        assertTrue(cleanup.drop(2).take(2).all { "-D" in it && "PREROUTING" in it })
++        assertEquals(2, cleanup.count { "route" in it && "del" in it })
++        assertEquals(2, cleanup.count { "rule" in it && "del" in it })
++        assertEquals(4, cleanup.count { "-X" in it })
++        val cleanupSize = commands.size
++        routes.close()
++        assertEquals(cleanupSize, commands.size)
++    }
++
++    @Test
++    fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
++        val commands = mutableListOf<List<String>>()
++        val failure = IllegalStateException("test failure")
++        val routes = TProxyRoutes(10231, 30080, emptyList()) { command ->
++            commands.add(command)
++            if (command.first().endsWith("ip6tables") && "-I" in command && "OUTPUT" in command) throw failure
++        }
++
++        assertEquals(failure, runCatching { routes.start() }.exceptionOrNull())
++        assertEquals(1, commands.count { "-D" in it && "OUTPUT" in it })
++        assertEquals(2, commands.count { "-D" in it && "PREROUTING" in it })
++        assertEquals(2, commands.count { "route" in it && "del" in it })
++    }
++}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..88163a7 100644
+index 751051e..e201845 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -741,7 +1313,7 @@ index 751051e..88163a7 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.1
-+VERSION_CODE=114
++VERSION_NAME=2.0.7-quality.2
++VERSION_CODE=115
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

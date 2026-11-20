@@ -1,3 +1,8 @@
+#### 2.0.7-quality.2
+
+* Add a TPROXY (root) service mode for device TCP and UDP on IPv4 and IPv6.
+* Require root and kernel TPROXY support. Restore the session's firewall chains and policy routes when it stops.
+
 #### 2.0.7-quality.1
 
 * Add a sequential connection quality test for the current group.

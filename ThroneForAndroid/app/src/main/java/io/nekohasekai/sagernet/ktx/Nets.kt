@@ -43,7 +43,10 @@ class HttpFetchResult(val body: String, private val headers: Headers) {
 fun appUserAgent(): String = DataStore.userAgent2.ifBlank { USER_AGENT }
 
 /** App requests use the mixed inbound with net_use_proxy or in proxy service mode (HTTPRequestHelper.cpp:26). */
-fun appRequestsViaProxy(): Boolean = DataStore.netUseProxy || DataStore.serviceMode == Key.MODE_PROXY
+fun appRequestsViaProxy(): Boolean = DataStore.netUseProxy || when (DataStore.serviceMode) {
+    Key.MODE_PROXY, Key.MODE_TPROXY -> true
+    else -> false
+}
 
 /**
  * Whether an app request that would use the proxy fails while no profile runs: only with net_use_proxy (or a
