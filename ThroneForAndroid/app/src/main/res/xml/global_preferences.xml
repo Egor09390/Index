@@ -25,12 +25,6 @@
         app:summary="@string/settings_tun_sum"
         app:title="@string/settings_tun" />
     <Preference
-        app:fragment="io.nekohasekai.sagernet.ui.settings.RoutingSettingsFragment"
-        app:icon="@drawable/ic_maps_directions"
-        app:key="settingsRouting"
-        app:summary="@string/settings_routing_sum"
-        app:title="@string/settings_routing" />
-    <Preference
         app:fragment="io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment"
         app:icon="@drawable/ic_action_dns"
         app:key="settingsDns"
@@ -42,12 +36,6 @@
         app:key="settingsPresets"
         app:summary="@string/settings_presets_sum"
         app:title="@string/settings_presets" />
-    <Preference
-        app:fragment="io.nekohasekai.sagernet.ui.settings.TestingSettingsFragment"
-        app:icon="@drawable/ic_baseline_speed_24"
-        app:key="settingsTesting"
-        app:summary="@string/settings_testing_sum"
-        app:title="@string/settings_testing" />
     <Preference
         app:fragment="io.nekohasekai.sagernet.ui.settings.SubscriptionSettingsFragment"
         app:icon="@drawable/ic_baseline_update_24"
@@ -71,11 +59,4 @@
         app:key="settingsBackup"
         app:summary="@string/settings_backup_sum"
         app:title="@string/settings_backup" />
-
-    <PreferenceCategory app:title="@string/cag_misc">
-        <Preference
-            app:icon="@drawable/baseline_undo_24"
-            app:key="resetSettings"
-            app:title="@string/reset_settings" />
-    </PreferenceCategory>
 </PreferenceScreen>

@@ -25,7 +25,6 @@ import io.nekohasekai.sagernet.outbound.OutboundChecks
 import io.nekohasekai.sagernet.outbound.common.QuicChecks
 import io.nekohasekai.sagernet.outbound.common.TlsChecks
 import io.nekohasekai.sagernet.ui.GroupSettingsActivity
-import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.profile.MuxBlock
 import io.nekohasekai.sagernet.ui.profile.XrayMuxBlock
 import io.nekohasekai.sagernet.ui.profile.keepUnlistedValue
@@ -388,7 +387,6 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
             val on = newValue as Boolean
             DataStore.coreBoxApiPort = if (on) portValue() else -portValue()
             sync(on)
-            (activity as? MainActivity)?.refreshNavMenu(on)
             needReload()
             true
         }

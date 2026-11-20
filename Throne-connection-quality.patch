@@ -43,10 +43,15 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..a674f8b 100644
+index 6460f87..809f91d 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,51 @@
+@@ -1,3 +1,56 @@
++#### 2.0.7-quality.12
++
++* Simplify the profiles toolbar, overflow menu, drawer and settings to match the marked screenshots.
++* Keep profile imports and editors, connection tests, route data, the VPN core and backup flows.
++
 +#### 2.0.7-quality.11
 +
 +* Let Android VPN routes reach their VPN interface directly in TPROXY mode so they use the Android VPN's exit IP.
@@ -1349,18 +1354,361 @@ index 2e06850..b6e89a9 100644
  
  /**
   * Whether an app request that would use the proxy fails while no profile runs: only with net_use_proxy (or a
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
+index 8887b2e..6abe831 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
+@@ -90,7 +90,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+         private const val ARG_PICKED_GROUP = "picked_group"
+         private const val ARG_TITLE = "title"
+         private const val ARG_HIDE_AUTO_SELECTORS = "hide_auto_selectors"
+-        private const val STATE_SORT_DESCENDING = "sort_descending"
+ 
+         /** Below this height (a phone in landscape) the header hides while the list scrolls down. */
+         private const val COMPACT_HEIGHT_DP = 480
+@@ -203,16 +202,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+ 
+     // ------------------------------------------------------------------------------------------------ lifecycle
+ 
+-    override fun onCreate(savedInstanceState: Bundle?) {
+-        super.onCreate(savedInstanceState)
+-        groupMenu.sortDescending = savedInstanceState?.getBoolean(STATE_SORT_DESCENDING) == true
+-    }
+-
+-    override fun onSaveInstanceState(outState: Bundle) {
+-        super.onSaveInstanceState(outState)
+-        outState.putBoolean(STATE_SORT_DESCENDING, groupMenu.sortDescending)
+-    }
+-
+     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+         super.onViewCreated(view, savedInstanceState)
+         val config = resources.configuration
+@@ -361,6 +350,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+             setNavigationIcon(R.drawable.ic_navigation_close, R.string.navigation_close)
+             toolbar.setNavigationOnClickListener { requireActivity().finish() }
+         } else {
++            toolbar.menu.removeItem(R.id.action_search)
+             toolbar.inflateMenu(R.menu.profile_selection_menu)
+             TvControls.addServerSwitch(toolbar.menu, R.id.group_profiles_toolbar)
+             groupMenu.setUp(toolbar.menu)
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
+index 650a1a3..6f9e51f 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
+@@ -43,7 +43,6 @@ import io.nekohasekai.sagernet.database.backup.BackupEntry
+ import io.nekohasekai.sagernet.databinding.LayoutMainBinding
+ import io.nekohasekai.sagernet.ktx.alert
+ import io.nekohasekai.sagernet.ktx.isPreview
+-import io.nekohasekai.sagernet.ktx.launchCustomTab
+ import io.nekohasekai.sagernet.ktx.onMainDispatcher
+ import io.nekohasekai.sagernet.database.SettingsMapper
+ import io.nekohasekai.sagernet.outbound.`import`.ProfileImport
+@@ -165,7 +164,6 @@ class MainActivity : ThemedActivity(),
+         if (savedInstanceState == null) intent?.let(::handleImportIntent)
+         SubscriptionReportDialog.observe(this)
+ 
+-        refreshNavMenu(DataStore.apiDashboardEnabled)
+ 
+         if (savedInstanceState == null) {
+             firstStart.start()
+@@ -222,13 +220,6 @@ class MainActivity : ThemedActivity(),
+         }
+     }
+ 
+-    /** The dashboard item follows the sing-box API (core_box_api_port), which serves the dashboard. */
+-    fun refreshNavMenu(dashboard: Boolean) {
+-        if (::navigation.isInitialized) {
+-            navigation.menu.findItem(R.id.nav_traffic)?.isVisible = dashboard
+-        }
+-    }
+-
+     override fun onNewIntent(intent: Intent) {
+         super.onNewIntent(intent)
+ 
+@@ -406,20 +397,12 @@ class MainActivity : ThemedActivity(),
+             R.id.nav_group -> displayFragment(GroupFragment())
+             R.id.nav_route -> displayFragment(RouteFragment())
+             R.id.nav_settings -> displayFragment(SettingsFragment())
+-            R.id.nav_traffic -> displayFragment(DashboardFragment())
+             R.id.nav_tools -> displayFragment(ToolsFragment())
+             R.id.nav_logcat -> displayFragment(LogcatFragment())
+             R.id.nav_live_graphs -> displayFragment(LiveGraphsFragment())
+-            R.id.nav_faq -> {
+-                launchCustomTab("https://throneproj.github.io")
+-                return false
+-            }
+-
+-            R.id.nav_about -> displayFragment(AboutFragment())
+-
+             else -> return false
+         }
+-        navigation.menu.findItem(id).isChecked = true
++        navigation.menu.findItem(id)?.isChecked = true
+         return true
+     }
+ 
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt
+index 2e85779..6a32347 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt
+@@ -7,12 +7,10 @@ import androidx.preference.PreferenceFragmentCompat
+ import io.nekohasekai.sagernet.R
+ import io.nekohasekai.sagernet.database.DataStore
+ import io.nekohasekai.sagernet.ktx.FixedLinearLayoutManager
+-import io.nekohasekai.sagernet.ktx.confirmAction
+-import io.nekohasekai.sagernet.ktx.triggerFullRestart
+ 
+ /**
+  * The settings root: one entry per sub-screen (io.nekohasekai.sagernet.ui.settings, opened by [SettingsFragment]),
+- * the backup screen and the reset action.
++ * and the backup screen.
+  */
+ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
+ 
+@@ -30,22 +28,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
+             (activity as? MainActivity)?.displayFragmentWithId(R.id.nav_tools)
+             true
+         }
+-
+-        findPreference<Preference>(KEY_RESET_SETTINGS)!!.setOnPreferenceClickListener {
+-            requireContext().confirmAction(
+-                getString(R.string.confirm_reset_settings),
+-                getString(R.string.reset_settings_message),
+-                R.string.confirm_restore,
+-            ) {
+-                DataStore.configurationStore.reset()
+-                triggerFullRestart(requireContext())
+-            }
+-            true
+-        }
+     }
+ 
+     private companion object {
+         const val KEY_BACKUP = "settingsBackup"
+-        const val KEY_RESET_SETTINGS = "resetSettings"
+     }
+ }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
-index d4944bf..5917bfe 100644
+index d4944bf..23770e6 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupMenu.kt
-@@ -125,6 +125,7 @@ class GroupMenu(private val host: ConfigurationFragment) {
+@@ -6,25 +6,16 @@ import android.view.View
+ import androidx.core.view.MenuCompat
+ import io.nekohasekai.sagernet.R
+ import io.nekohasekai.sagernet.bg.test.TestSpec
+-import io.nekohasekai.sagernet.database.GroupSortMethod
+ import io.nekohasekai.sagernet.database.ProxyGroup
+-import io.nekohasekai.sagernet.database.TestBy
+ import io.nekohasekai.sagernet.database.TestShowItems
+-import io.nekohasekai.sagernet.database.TrafficBy
+-import io.nekohasekai.sagernet.database.TypeBy
+ import io.nekohasekai.sagernet.ui.ConfigurationFragment
+ import io.nekohasekai.sagernet.ui.test.TestSessionClient
+ 
+ /** The ⋮ menu of the profiles screen: actions on the current tab's group (the desktop's Groups menu). */
+ class GroupMenu(private val host: ConfigurationFragment) {
+ 
+-    /** Direction of the next sort; a group that keeps a sort shows its own direction. */
+-    var sortDescending = false
+-
+     fun setUp(menu: Menu) {
+         menu.findItem(R.id.action_misc)?.subMenu?.let { MenuCompat.setGroupDividerEnabled(it, true) }
+-        keepOpen(menu, R.id.action_sort_ascending) { setDirection(it, false) }
+-        keepOpen(menu, R.id.action_sort_descending) { setDirection(it, true) }
+         keepOpen(menu, R.id.action_show_out_ip) { toggleShown(menu, it) }
+         keepOpen(menu, R.id.action_show_speed) { toggleShown(menu, it) }
+     }
+@@ -47,26 +38,6 @@ class GroupMenu(private val host: ConfigurationFragment) {
+         }
+     }
+ 
+-    /** Like a click on the sorted column's header: a kept sort turns around at once. */
+-    private fun setDirection(item: MenuItem, descending: Boolean) {
+-        sortDescending = descending
+-        item.isChecked = true
+-        val group = host.currentGroup() ?: return
+-        if (group.keepsSorted()) GroupActions.sort(host, group.id, group.sort.method, descending)
+-    }
+-
+-    /** ProfilesTableModel::columnOfSort: the item of the kept sort, Manual order without one. */
+-    private fun sortItem(group: ProxyGroup): Int = when (group.sort.method) {
+-        GroupSortMethod.BY_TYPE, GroupSortMethod.BY_SECURITY ->
+-            if (TypeBy.of(group.typeSortBy) == TypeBy.BY_SECURITY) R.id.action_sort_security else R.id.action_sort_type
+-
+-        GroupSortMethod.BY_ADDRESS -> R.id.action_sort_address
+-        GroupSortMethod.BY_NAME -> R.id.action_sort_name
+-        GroupSortMethod.BY_TEST_RESULT, GroupSortMethod.BY_LATENCY -> R.id.action_sort_test_result
+-        GroupSortMethod.BY_TRAFFIC -> R.id.action_sort_traffic
+-        GroupSortMethod.RAW, GroupSortMethod.BY_ID -> R.id.action_sort_manual
+-    }
+-
+     private fun toggleShown(menu: Menu, item: MenuItem) {
+         item.isChecked = !item.isChecked
+         val group = host.currentGroup() ?: return
+@@ -83,25 +54,7 @@ class GroupMenu(private val host: ConfigurationFragment) {
+         val group = host.currentGroup()
+         menu.findItem(R.id.action_update_subscription)?.isVisible = group?.isSubscription == true
+         menu.findItem(R.id.action_test_stop)?.isVisible = host.testState.running
+-        if (group != null && group.keepsSorted()) sortDescending = group.sort.descending
+-        menu.findItem(if (sortDescending) R.id.action_sort_descending else R.id.action_sort_ascending)?.isChecked = true
+         if (group != null) {
+-            menu.findItem(sortItem(group))?.isChecked = true
+-            menu.findItem(
+-                when (TestBy.of(group.testSortBy)) {
+-                    TestBy.LATENCY -> R.id.action_sort_test_latency
+-                    TestBy.DL_SPEED -> R.id.action_sort_test_download
+-                    TestBy.UL_SPEED -> R.id.action_sort_test_upload
+-                    TestBy.IP_OUT -> R.id.action_sort_test_ip_out
+-                }
+-            )?.isChecked = true
+-            menu.findItem(
+-                when (TrafficBy.of(group.trafficSortBy)) {
+-                    TrafficBy.TOTAL -> R.id.action_sort_traffic_total
+-                    TrafficBy.DL -> R.id.action_sort_traffic_downloaded
+-                    TrafficBy.UL -> R.id.action_sort_traffic_uploaded
+-                }
+-            )?.isChecked = true
+             val shown = TestShowItems.of(group.testItemsToShow)
+             menu.findItem(R.id.action_show_out_ip)?.isChecked = shown.showIp
+             menu.findItem(R.id.action_show_speed)?.isChecked = shown.showSpeed
+@@ -125,46 +78,9 @@ class GroupMenu(private val host: ConfigurationFragment) {
              R.id.action_test_ip -> ProfileTests.startGroup(host, TestSpec.KIND_IP, id)
              R.id.action_test_speed -> ProfileTests.startGroup(host, TestSpec.KIND_SPEED, id)
              R.id.action_test_service -> ProfileTests.startServiceGroup(host, id)
+-            R.id.action_clear_test_results -> GroupActions.clearTestResults(host, group)
+-            R.id.action_remove_duplicates -> GroupActions.removeDuplicates(host, id)
+-            R.id.action_remove_unavailable -> GroupActions.removeUnavailable(host, id)
+-            R.id.action_remove_invalid -> GroupActions.removeInvalid(host, group)
+-            R.id.action_remove_insecure -> GroupActions.removeInsecure(host, id)
+-            R.id.action_resolve_domains -> GroupActions.resolveDomains(host, group)
+-            R.id.action_clear_traffic_statistics -> GroupActions.clearTraffic(host, group)
+-
+-            // the header menu's "Stop Sorting": the current order becomes the manual one
+-            R.id.action_sort_manual -> GroupActions.stopSorting(host, id)
+-
+-            // the Type column's "Sort By: Type / Security" stores type_sort_by
+-            R.id.action_sort_type -> sort(id, GroupSortMethod.BY_TYPE) { it.typeSortBy = TypeBy.BY_TYPE.value }
+-            R.id.action_sort_security -> sort(id, GroupSortMethod.BY_SECURITY) {
+-                it.typeSortBy = TypeBy.BY_SECURITY.value
+-            }
+-
+-            R.id.action_sort_address -> sort(id, GroupSortMethod.BY_ADDRESS)
+-            R.id.action_sort_name -> sort(id, GroupSortMethod.BY_NAME)
+-            R.id.action_sort_test_latency -> sortByTest(id, TestBy.LATENCY)
+-            R.id.action_sort_test_download -> sortByTest(id, TestBy.DL_SPEED)
+-            R.id.action_sort_test_upload -> sortByTest(id, TestBy.UL_SPEED)
+-            R.id.action_sort_test_ip_out -> sortByTest(id, TestBy.IP_OUT)
+-            R.id.action_sort_traffic_total -> sortByTraffic(id, TrafficBy.TOTAL)
+-            R.id.action_sort_traffic_downloaded -> sortByTraffic(id, TrafficBy.DL)
+-            R.id.action_sort_traffic_uploaded -> sortByTraffic(id, TrafficBy.UL)
 +            R.id.action_test_quality -> ProfileTests.startGroup(host, TestSpec.KIND_QUALITY, id)
-             R.id.action_clear_test_results -> GroupActions.clearTestResults(host, group)
-             R.id.action_remove_duplicates -> GroupActions.removeDuplicates(host, id)
-             R.id.action_remove_unavailable -> GroupActions.removeUnavailable(host, id)
+             else -> return false
+         }
+         return true
+     }
+-
+-    private fun sort(groupId: Long, method: GroupSortMethod, save: ((ProxyGroup) -> Unit)? = null) {
+-        GroupActions.sort(host, groupId, method, sortDescending, save)
+-    }
+-
+-    private fun sortByTest(groupId: Long, by: TestBy) {
+-        sort(groupId, GroupSortMethod.BY_TEST_RESULT) { it.testSortBy = by.value }
+-    }
+-
+-    private fun sortByTraffic(groupId: Long, by: TrafficBy) {
+-        sort(groupId, GroupSortMethod.BY_TRAFFIC) { it.trafficSortBy = by.value }
+-    }
+ }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileImports.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileImports.kt
+index 8d83d64..f5c7953 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileImports.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileImports.kt
+@@ -23,36 +23,9 @@ import io.nekohasekai.sagernet.ui.ConfigurationFragment
+ import io.nekohasekai.sagernet.ui.ScannerActivity
+ import io.nekohasekai.sagernet.ui.SubscribeFlows
+ import io.nekohasekai.sagernet.ui.SubscriptionReportDialog
+-import io.nekohasekai.sagernet.ui.profile.AnyTLSSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.AutoSelectorSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.ChainSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.CustomSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.DirectSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.DnsttSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.HttpSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.HysteriaSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.JuicitySettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.MasqueSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.MasterDnsSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.MieruSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.NaiveSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.OpenConnectSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.OpenVpnSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.SSHSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.ShadowTLSSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.ShadowsocksSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.SnellSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.SocksSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.TrojanSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.TrustTunnelSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.TuicSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.VMessSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.VlessSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.WireGuardSettingsActivity
+-import io.nekohasekai.sagernet.ui.profile.XrayVlessSettingsActivity
+ import java.util.zip.ZipInputStream
+ 
+-/** The "+" menu: scan, clipboard, file and the new-profile editors. Imports go to the current tab's group. */
++/** The "+" menu imports from a QR code, clipboard or file into the current tab's group. */
+ class ProfileImports(private val host: ConfigurationFragment) {
+ 
+     private val importFile = host.registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+@@ -72,10 +45,7 @@ class ProfileImports(private val host: ConfigurationFragment) {
+             R.id.action_scan_qr_code -> host.startActivity(Intent(host.requireContext(), ScannerActivity::class.java))
+             R.id.action_import_clipboard -> importClipboard()
+             R.id.action_import_file -> host.startFilesForResult(importFile, "*/*")
+-            else -> {
+-                val editor = editorFor(item.itemId) ?: return false
+-                host.startActivity(Intent(host.requireContext(), editor))
+-            }
++            else -> return false
+         }
+         return true
+     }
+@@ -136,35 +106,4 @@ class ProfileImports(private val host: ConfigurationFragment) {
+             }
+         }
+     }
+-
+-    private fun editorFor(itemId: Int): Class<*>? = when (itemId) {
+-        R.id.action_new_auto_selector -> AutoSelectorSettingsActivity::class.java
+-        R.id.action_new_socks -> SocksSettingsActivity::class.java
+-        R.id.action_new_http -> HttpSettingsActivity::class.java
+-        R.id.action_new_ss -> ShadowsocksSettingsActivity::class.java
+-        R.id.action_new_vmess -> VMessSettingsActivity::class.java
+-        R.id.action_new_vless -> VlessSettingsActivity::class.java
+-        R.id.action_new_xray_vless -> XrayVlessSettingsActivity::class.java
+-        R.id.action_new_trojan -> TrojanSettingsActivity::class.java
+-        R.id.action_new_mieru -> MieruSettingsActivity::class.java
+-        R.id.action_new_naive -> NaiveSettingsActivity::class.java
+-        R.id.action_new_hysteria -> HysteriaSettingsActivity::class.java
+-        R.id.action_new_tuic -> TuicSettingsActivity::class.java
+-        R.id.action_new_juicity -> JuicitySettingsActivity::class.java
+-        R.id.action_new_ssh -> SSHSettingsActivity::class.java
+-        R.id.action_new_snell -> SnellSettingsActivity::class.java
+-        R.id.action_new_wg -> WireGuardSettingsActivity::class.java
+-        R.id.action_new_shadowtls -> ShadowTLSSettingsActivity::class.java
+-        R.id.action_new_anytls -> AnyTLSSettingsActivity::class.java
+-        R.id.action_new_trusttunnel -> TrustTunnelSettingsActivity::class.java
+-        R.id.action_new_dnstt -> DnsttSettingsActivity::class.java
+-        R.id.action_new_masterdns -> MasterDnsSettingsActivity::class.java
+-        R.id.action_new_direct -> DirectSettingsActivity::class.java
+-        R.id.action_new_masque -> MasqueSettingsActivity::class.java
+-        R.id.action_new_openvpn -> OpenVpnSettingsActivity::class.java
+-        R.id.action_new_openconnect -> OpenConnectSettingsActivity::class.java
+-        R.id.action_new_config -> CustomSettingsActivity::class.java
+-        R.id.action_new_chain -> ChainSettingsActivity::class.java
+-        else -> null
+-    }
+ }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
 index 85acd8c..3543b24 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
@@ -1488,6 +1836,26 @@ index c7d6f21..e7a0bb6 100644
      private fun heightOf(view: View) = if (view.isGone) 0 else view.measuredHeight
  
      /** The height of the shown [views] on one baseline: emoji make a text taller than its neighbours. */
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
+index 5d05dd5..016e273 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
+@@ -25,7 +25,6 @@ import io.nekohasekai.sagernet.outbound.OutboundChecks
+ import io.nekohasekai.sagernet.outbound.common.QuicChecks
+ import io.nekohasekai.sagernet.outbound.common.TlsChecks
+ import io.nekohasekai.sagernet.ui.GroupSettingsActivity
+-import io.nekohasekai.sagernet.ui.MainActivity
+ import io.nekohasekai.sagernet.ui.profile.MuxBlock
+ import io.nekohasekai.sagernet.ui.profile.XrayMuxBlock
+ import io.nekohasekai.sagernet.ui.profile.keepUnlistedValue
+@@ -388,7 +387,6 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+             val on = newValue as Boolean
+             DataStore.coreBoxApiPort = if (on) portValue() else -portValue()
+             sync(on)
+-            (activity as? MainActivity)?.refreshNavMenu(on)
+             needReload()
+             true
+         }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt
 index 6862508..ee0f18a 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestFormat.kt
@@ -1627,10 +1995,102 @@ index 6c9119e..5f35cdb 100644
                  android:id="@+id/edit"
                  android:layout_width="wrap_content"
 diff --git a/app/src/main/res/menu/add_profile_menu.xml b/app/src/main/res/menu/add_profile_menu.xml
-index 064444a..2e10de3 100644
+index 064444a..2b0d938 100644
 --- a/app/src/main/res/menu/add_profile_menu.xml
 +++ b/app/src/main/res/menu/add_profile_menu.xml
-@@ -146,6 +146,9 @@
+@@ -23,91 +23,6 @@
+                 <item
+                     android:id="@+id/action_import_file"
+                     android:title="@string/action_import_file" />
+-                <item android:title="@string/add_profile_methods_manual_settings">
+-                    <menu>
+-                        <item
+-                            android:id="@+id/action_new_auto_selector"
+-                            android:title="@string/action_auto_selector" />
+-                        <item
+-                            android:id="@+id/action_new_socks"
+-                            android:title="@string/action_socks" />
+-                        <item
+-                            android:id="@+id/action_new_http"
+-                            android:title="@string/action_http" />
+-                        <item
+-                            android:id="@+id/action_new_ss"
+-                            android:title="@string/action_shadowsocks" />
+-                        <item
+-                            android:id="@+id/action_new_vmess"
+-                            android:title="@string/action_vmess" />
+-                        <item
+-                            android:id="@+id/action_new_vless"
+-                            android:title="@string/action_vless" />
+-                        <item
+-                            android:id="@+id/action_new_xray_vless"
+-                            android:title="@string/action_vless_xray" />
+-                        <item
+-                            android:id="@+id/action_new_trojan"
+-                            android:title="@string/action_trojan" />
+-                        <item
+-                            android:id="@+id/action_new_mieru"
+-                            android:title="@string/action_mieru" />
+-                        <item
+-                            android:id="@+id/action_new_naive"
+-                            android:title="@string/action_naive" />
+-                        <item
+-                            android:id="@+id/action_new_hysteria"
+-                            android:title="@string/action_hysteria" />
+-                        <item
+-                            android:id="@+id/action_new_tuic"
+-                            android:title="@string/action_tuic" />
+-                        <item
+-                            android:id="@+id/action_new_juicity"
+-                            android:title="@string/action_juicity" />
+-                        <item
+-                            android:id="@+id/action_new_shadowtls"
+-                            android:title="@string/action_shadowtls" />
+-                        <item
+-                            android:id="@+id/action_new_anytls"
+-                            android:title="@string/action_anytls" />
+-                        <item
+-                            android:id="@+id/action_new_trusttunnel"
+-                            android:title="@string/action_trusttunnel" />
+-                        <item
+-                            android:id="@+id/action_new_snell"
+-                            android:title="@string/action_snell" />
+-                        <item
+-                            android:id="@+id/action_new_ssh"
+-                            android:title="@string/action_ssh" />
+-                        <item
+-                            android:id="@+id/action_new_wg"
+-                            android:title="@string/action_wireguard" />
+-                        <item
+-                            android:id="@+id/action_new_masque"
+-                            android:title="@string/action_masque" />
+-                        <item
+-                            android:id="@+id/action_new_openvpn"
+-                            android:title="@string/action_openvpn" />
+-                        <item
+-                            android:id="@+id/action_new_openconnect"
+-                            android:title="@string/action_openconnect" />
+-                        <item
+-                            android:id="@+id/action_new_dnstt"
+-                            android:title="@string/action_dnstt" />
+-                        <item
+-                            android:id="@+id/action_new_masterdns"
+-                            android:title="@string/action_masterdns" />
+-                        <item
+-                            android:id="@+id/action_new_direct"
+-                            android:title="@string/action_direct" />
+-                        <item
+-                            android:id="@+id/action_new_config"
+-                            android:title="@string/custom_config" />
+-                        <item
+-                            android:id="@+id/action_new_chain"
+-                            android:title="@string/proxy_chain" />
+-                    </menu>
+-                </item>
+             </menu>
+         </item>
+ 
+@@ -146,120 +61,17 @@
                              <item
                                  android:id="@+id/action_test_service"
                                  android:title="@string/service_check" />
@@ -1640,6 +2100,176 @@ index 064444a..2e10de3 100644
                              <item
                                  android:id="@+id/action_test_stop"
                                  android:title="@string/profiles_test_stop"
+                                 android:visible="false" />
+                         </menu>
+                     </item>
+-                    <item
+-                        android:id="@+id/action_resolve_domains"
+-                        android:title="@string/profiles_resolve_domains" />
+                 </group>
+-                <group android:id="@+id/group_menu_cleanup">
+-                    <item
+-                        android:id="@+id/action_clear_test_results"
+-                        android:title="@string/connection_test_clear_results" />
+-                    <item
+-                        android:id="@+id/action_clear_traffic_statistics"
+-                        android:title="@string/clear_traffic_statistics" />
+-                    <item
+-                        android:id="@+id/action_remove"
+-                        android:title="@string/profiles_remove">
+-                        <menu>
+-                            <item
+-                                android:id="@+id/action_remove_duplicates"
+-                                android:title="@string/profiles_remove_duplicates" />
+-                            <item
+-                                android:id="@+id/action_remove_unavailable"
+-                                android:title="@string/profiles_remove_unavailable" />
+-                            <item
+-                                android:id="@+id/action_remove_invalid"
+-                                android:title="@string/profiles_remove_invalid" />
+-                            <item
+-                                android:id="@+id/action_remove_insecure"
+-                                android:title="@string/profiles_remove_insecure" />
+-                        </menu>
+-                    </item>
+-                </group>
+-                <group android:id="@+id/group_menu_order">
+-                    <item
+-                        android:id="@+id/action_sort"
+-                        android:title="@string/profiles_sort">
+-                        <menu>
+-                            <group
+-                                android:id="@+id/group_sort_direction"
+-                                android:checkableBehavior="single">
+-                                <item
+-                                    android:id="@+id/action_sort_ascending"
+-                                    android:checked="true"
+-                                    android:title="@string/profiles_sort_ascending" />
+-                                <item
+-                                    android:id="@+id/action_sort_descending"
+-                                    android:title="@string/profiles_sort_descending" />
+-                            </group>
+-                            <group
+-                                android:id="@+id/group_sort_methods"
+-                                android:checkableBehavior="single">
+-                                <item
+-                                    android:id="@+id/action_sort_manual"
+-                                    android:title="@string/profiles_sort_manual" />
+-                                <item
+-                                    android:id="@+id/action_sort_type"
+-                                    android:title="@string/profiles_sort_type" />
+-                                <item
+-                                    android:id="@+id/action_sort_security"
+-                                    android:title="@string/profiles_sort_security" />
+-                                <item
+-                                    android:id="@+id/action_sort_address"
+-                                    android:title="@string/profiles_sort_address" />
+-                                <item
+-                                    android:id="@+id/action_sort_name"
+-                                    android:title="@string/profiles_sort_name" />
+-                                <item
+-                                    android:id="@+id/action_sort_test_result"
+-                                    android:title="@string/profiles_sort_test_result">
+-                                    <menu>
+-                                        <group
+-                                            android:id="@+id/group_sort_test_by"
+-                                            android:checkableBehavior="single">
+-                                            <item
+-                                                android:id="@+id/action_sort_test_latency"
+-                                                android:title="@string/profiles_sort_latency" />
+-                                            <item
+-                                                android:id="@+id/action_sort_test_download"
+-                                                android:title="@string/profiles_sort_download" />
+-                                            <item
+-                                                android:id="@+id/action_sort_test_upload"
+-                                                android:title="@string/profiles_sort_upload" />
+-                                            <item
+-                                                android:id="@+id/action_sort_test_ip_out"
+-                                                android:title="@string/profiles_sort_ip_out" />
+-                                        </group>
+-                                    </menu>
+-                                </item>
+-                                <item
+-                                    android:id="@+id/action_sort_traffic"
+-                                    android:title="@string/profiles_sort_traffic">
+-                                    <menu>
+-                                        <group
+-                                            android:id="@+id/group_sort_traffic_by"
+-                                            android:checkableBehavior="single">
+-                                            <item
+-                                                android:id="@+id/action_sort_traffic_total"
+-                                                android:title="@string/profiles_sort_traffic_total" />
+-                                            <item
+-                                                android:id="@+id/action_sort_traffic_downloaded"
+-                                                android:title="@string/profiles_sort_traffic_downloaded" />
+-                                            <item
+-                                                android:id="@+id/action_sort_traffic_uploaded"
+-                                                android:title="@string/profiles_sort_traffic_uploaded" />
+-                                        </group>
+-                                    </menu>
+-                                </item>
+-                            </group>
+-                        </menu>
+-                    </item>
++                <group android:id="@+id/group_menu_display">
+                     <item
+                         android:id="@+id/action_show"
+                         android:title="@string/profiles_show">
+diff --git a/app/src/main/res/menu/main_drawer_menu.xml b/app/src/main/res/menu/main_drawer_menu.xml
+index db509e4..b4be9d8 100644
+--- a/app/src/main/res/menu/main_drawer_menu.xml
++++ b/app/src/main/res/menu/main_drawer_menu.xml
+@@ -7,16 +7,6 @@
+             android:icon="@drawable/ic_action_description"
+             android:title="@string/menu_configuration" />
+ 
+-        <item
+-            android:id="@+id/nav_group"
+-            android:icon="@drawable/ic_baseline_view_list_24"
+-            android:title="@string/menu_group" />
+-
+-        <item
+-            android:id="@+id/nav_route"
+-            android:icon="@drawable/ic_maps_directions"
+-            android:title="@string/menu_route" />
+-
+         <item
+             android:id="@+id/nav_settings"
+             android:icon="@drawable/ic_action_settings"
+@@ -30,31 +20,9 @@
+             android:id="@+id/nav_logcat"
+             android:icon="@drawable/ic_baseline_bug_report_24"
+             android:title="@string/menu_log" />
+-        <item
+-            android:id="@+id/nav_live_graphs"
+-            android:icon="@drawable/ic_baseline_show_chart_24"
+-            android:title="@string/live_graphs" />
+-        <item
+-            android:id="@+id/nav_traffic"
+-            android:icon="@drawable/ic_baseline_transform_24"
+-            android:title="@string/menu_dashboard" />
+         <item
+             android:id="@+id/nav_tools"
+             android:icon="@drawable/baseline_construction_24"
+             android:title="@string/menu_tools" />
+     </group>
+-
+-    <group
+-        android:id="@+id/about"
+-        android:checkableBehavior="single">
+-        <item
+-            android:id="@+id/nav_faq"
+-            android:icon="@drawable/ic_baseline_menu_book_24"
+-            android:title="@string/document" />
+-        <item
+-            android:id="@+id/nav_about"
+-            android:icon="@drawable/ic_baseline_info_24"
+-            android:title="@string/menu_about" />
+-    </group>
+-
+-</menu>
+\ No newline at end of file
++</menu>
 diff --git a/app/src/main/res/values-ar/arrays.xml b/app/src/main/res/values-ar/arrays.xml
 index 630629b..514b2f8 100644
 --- a/app/src/main/res/values-ar/arrays.xml
@@ -2108,6 +2738,19 @@ index 0000000..4e214b0
 +<resources>
 +    <color name="connection_quality_red">#B3261E</color>
 +</resources>
+diff --git a/app/src/main/res/values/ids.xml b/app/src/main/res/values/ids.xml
+index a42c72e..2a33587 100644
+--- a/app/src/main/res/values/ids.xml
++++ b/app/src/main/res/values/ids.xml
+@@ -4,4 +4,8 @@
+     <item name="inset_margin_base" type="id" />
+     <item name="action_previous_server" type="id" />
+     <item name="action_next_server" type="id" />
++    <!-- Destinations reached by imports and the stats bar. -->
++    <item name="nav_group" type="id" />
++    <item name="nav_route" type="id" />
++    <item name="nav_live_graphs" type="id" />
+ </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
 index 8b6872e..a7a0a26 100644
 --- a/app/src/main/res/values/strings.xml
@@ -2135,6 +2778,48 @@ index 0000000..487816d
 +    <string name="tproxy_root_timeout">The root process did not respond. Check access in your root manager.</string>
 +    <string name="tproxy_stop_timeout">The TPROXY process did not stop in time.</string>
 +</resources>
+diff --git a/app/src/main/res/xml/global_preferences.xml b/app/src/main/res/xml/global_preferences.xml
+index f7e7747..e0f0b4e 100644
+--- a/app/src/main/res/xml/global_preferences.xml
++++ b/app/src/main/res/xml/global_preferences.xml
+@@ -24,12 +24,6 @@
+         app:key="settingsTun"
+         app:summary="@string/settings_tun_sum"
+         app:title="@string/settings_tun" />
+-    <Preference
+-        app:fragment="io.nekohasekai.sagernet.ui.settings.RoutingSettingsFragment"
+-        app:icon="@drawable/ic_maps_directions"
+-        app:key="settingsRouting"
+-        app:summary="@string/settings_routing_sum"
+-        app:title="@string/settings_routing" />
+     <Preference
+         app:fragment="io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment"
+         app:icon="@drawable/ic_action_dns"
+@@ -42,12 +36,6 @@
+         app:key="settingsPresets"
+         app:summary="@string/settings_presets_sum"
+         app:title="@string/settings_presets" />
+-    <Preference
+-        app:fragment="io.nekohasekai.sagernet.ui.settings.TestingSettingsFragment"
+-        app:icon="@drawable/ic_baseline_speed_24"
+-        app:key="settingsTesting"
+-        app:summary="@string/settings_testing_sum"
+-        app:title="@string/settings_testing" />
+     <Preference
+         app:fragment="io.nekohasekai.sagernet.ui.settings.SubscriptionSettingsFragment"
+         app:icon="@drawable/ic_baseline_update_24"
+@@ -71,11 +59,4 @@
+         app:key="settingsBackup"
+         app:summary="@string/settings_backup_sum"
+         app:title="@string/settings_backup" />
+-
+-    <PreferenceCategory app:title="@string/cag_misc">
+-        <Preference
+-            app:icon="@drawable/baseline_undo_24"
+-            app:key="resetSettings"
+-            app:title="@string/reset_settings" />
+-    </PreferenceCategory>
+ </PreferenceScreen>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
 index 0000000..197e1b2
@@ -2349,7 +3034,7 @@ index 0000000..b6f8854
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..5d4720f 100644
+index 751051e..a424f87 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -2357,7 +3042,7 @@ index 751051e..5d4720f 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.11
-+VERSION_CODE=124
++VERSION_NAME=2.0.7-quality.12
++VERSION_CODE=125
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

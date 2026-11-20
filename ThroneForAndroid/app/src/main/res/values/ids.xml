@@ -4,4 +4,8 @@
     <item name="inset_margin_base" type="id" />
     <item name="action_previous_server" type="id" />
     <item name="action_next_server" type="id" />
+    <!-- Destinations reached by imports and the stats bar. -->
+    <item name="nav_group" type="id" />
+    <item name="nav_route" type="id" />
+    <item name="nav_live_graphs" type="id" />
 </resources>

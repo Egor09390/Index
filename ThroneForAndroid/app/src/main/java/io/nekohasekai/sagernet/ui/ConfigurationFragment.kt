@@ -90,7 +90,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
         private const val ARG_PICKED_GROUP = "picked_group"
         private const val ARG_TITLE = "title"
         private const val ARG_HIDE_AUTO_SELECTORS = "hide_auto_selectors"
-        private const val STATE_SORT_DESCENDING = "sort_descending"
 
         /** Below this height (a phone in landscape) the header hides while the list scrolls down. */
         private const val COMPACT_HEIGHT_DP = 480
@@ -202,16 +201,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
     }
 
     // ------------------------------------------------------------------------------------------------ lifecycle
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        groupMenu.sortDescending = savedInstanceState?.getBoolean(STATE_SORT_DESCENDING) == true
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_SORT_DESCENDING, groupMenu.sortDescending)
-    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -361,6 +350,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
             setNavigationIcon(R.drawable.ic_navigation_close, R.string.navigation_close)
             toolbar.setNavigationOnClickListener { requireActivity().finish() }
         } else {
+            toolbar.menu.removeItem(R.id.action_search)
             toolbar.inflateMenu(R.menu.profile_selection_menu)
             TvControls.addServerSwitch(toolbar.menu, R.id.group_profiles_toolbar)
             groupMenu.setUp(toolbar.menu)

@@ -1,3 +1,8 @@
+#### 2.0.7-quality.12
+
+* Simplify the profiles toolbar, overflow menu, drawer and settings to match the marked screenshots.
+* Keep profile imports and editors, connection tests, route data, the VPN core and backup flows.
+
 #### 2.0.7-quality.11
 
 * Let Android VPN routes reach their VPN interface directly in TPROXY mode so they use the Android VPN's exit IP.

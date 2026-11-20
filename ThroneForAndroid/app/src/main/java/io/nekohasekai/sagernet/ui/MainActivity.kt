@@ -43,7 +43,6 @@ import io.nekohasekai.sagernet.database.backup.BackupEntry
 import io.nekohasekai.sagernet.databinding.LayoutMainBinding
 import io.nekohasekai.sagernet.ktx.alert
 import io.nekohasekai.sagernet.ktx.isPreview
-import io.nekohasekai.sagernet.ktx.launchCustomTab
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.database.SettingsMapper
 import io.nekohasekai.sagernet.outbound.`import`.ProfileImport
@@ -165,7 +164,6 @@ class MainActivity : ThemedActivity(),
         if (savedInstanceState == null) intent?.let(::handleImportIntent)
         SubscriptionReportDialog.observe(this)
 
-        refreshNavMenu(DataStore.apiDashboardEnabled)
 
         if (savedInstanceState == null) {
             firstStart.start()
@@ -219,13 +217,6 @@ class MainActivity : ThemedActivity(),
             }
         } catch (e: Exception) {
             Logs.w("Failed to set excludeFromRecents: ${e.message}")
-        }
-    }
-
-    /** The dashboard item follows the sing-box API (core_box_api_port), which serves the dashboard. */
-    fun refreshNavMenu(dashboard: Boolean) {
-        if (::navigation.isInitialized) {
-            navigation.menu.findItem(R.id.nav_traffic)?.isVisible = dashboard
         }
     }
 
@@ -406,20 +397,12 @@ class MainActivity : ThemedActivity(),
             R.id.nav_group -> displayFragment(GroupFragment())
             R.id.nav_route -> displayFragment(RouteFragment())
             R.id.nav_settings -> displayFragment(SettingsFragment())
-            R.id.nav_traffic -> displayFragment(DashboardFragment())
             R.id.nav_tools -> displayFragment(ToolsFragment())
             R.id.nav_logcat -> displayFragment(LogcatFragment())
             R.id.nav_live_graphs -> displayFragment(LiveGraphsFragment())
-            R.id.nav_faq -> {
-                launchCustomTab("https://throneproj.github.io")
-                return false
-            }
-
-            R.id.nav_about -> displayFragment(AboutFragment())
-
             else -> return false
         }
-        navigation.menu.findItem(id).isChecked = true
+        navigation.menu.findItem(id)?.isChecked = true
         return true
     }
 
