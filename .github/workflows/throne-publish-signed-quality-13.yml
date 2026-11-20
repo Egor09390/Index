@@ -1,0 +1,24 @@
+name: Publish signed Throne quality.13 APK
+on:
+  push:
+    branches: [throne-quality-13-download]
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish the verified signed APK as Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          gh release download v2.0.7-quality.13 --pattern Throne-2.0.7-quality.13-arm64-v8a-debug.apk
+          python3 "$GITHUB_WORKSPACE/throne-apk-delivery/restore.py" Throne-2.0.7-quality.13-arm64-v8a-debug.apk Throne-2.0.7-quality.13-arm64-v8a.apk
+          gh release upload v2.0.7-quality.13 Throne-2.0.7-quality.13-arm64-v8a.apk
+          gh api "repos/$GH_REPO/releases/tags/v2.0.7-quality.13" | jq -e '.assets | any(.name == "Throne-2.0.7-quality.13-arm64-v8a.apk" and .digest == "sha256:b5e58e749354a62d53b6d9c17a9a33226d2eeb769c6a7e99c9ccf9b0b2010edc")' >/dev/null
+          gh release edit v2.0.7-quality.13 --prerelease=false --latest
+          gh api "repos/$GH_REPO/releases/latest" | jq -e '.tag_name == "v2.0.7-quality.13" and .prerelease == false and .draft == false' >/dev/null
