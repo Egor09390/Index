@@ -1,0 +1,20 @@
+name: Publish Throne quality.12 as the latest release
+on:
+  push:
+    branches: [throne-publish-quality-12]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote the existing signed APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag='v2.0.7-quality.12'
+          gh api "repos/$GH_REPO/releases/tags/$tag" | jq -e '(.id == 452908300) and (.assets | any(.id == 772465599 and .digest == "sha256:3eb72ee12ed84e9f56c7e8327aa84353f6df410ed2e0cd37c07b71a7ba867bfe"))' >/dev/null
+          gh release edit "$tag" --prerelease=false --latest
+          gh api "repos/$GH_REPO/releases/latest" | jq -e --arg tag "$tag" '.tag_name == $tag and .prerelease == false and .draft == false' >/dev/null
