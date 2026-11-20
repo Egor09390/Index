@@ -1,3 +1,7 @@
+#### 2.0.7-quality.3
+
+* Run TPROXY on Android 14 or later using the special-use foreground service type.
+
 #### 2.0.7-quality.2
 
 * Add a TPROXY (root) service mode for device TCP and UDP on IPv4 and IPv6.

@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.bg
 
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.bg.tproxy.TProxySession
@@ -15,7 +16,11 @@ class ProxyService : Service(), BaseService.Interface {
     override val data = BaseService.Data(this)
     override val tag: String get() = "SagerNetProxyService"
     override fun createNotification(profileName: String): ServiceNotification =
-        ServiceNotification(this, profileName, "service-proxy", true)
+        if (DataStore.serviceMode == Key.MODE_TPROXY) {
+            ServiceNotification(this, profileName, "service-proxy", true, FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            ServiceNotification(this, profileName, "service-proxy", true)
+        }
 
     override var upstreamInterfaceName: String? = null
 
