@@ -12,6 +12,7 @@ import io.nekohasekai.sagernet.outbound.config.PortLease
 import io.nekohasekai.sagernet.outbound.json.JsonArray
 import io.nekohasekai.sagernet.outbound.json.JsonInput
 import io.nekohasekai.sagernet.outbound.json.JsonObject
+import io.nekohasekai.sagernet.outbound.json.JsonValues
 import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
 import java.io.Closeable
 import java.io.IOException
@@ -35,7 +36,10 @@ internal class TProxySession(
     @Volatile private var closing = false
     @Volatile private var errorMessage: String? = null
 
-    fun start() {
+    private val commands = Any()
+    private var vpnInterfaces = emptySet<String>()
+
+    fun start(initialVpnInterfaces: Set<String>) {
         val config = JsonInput.parseObject(coreConfig)
         val mixed = config.array("inbounds")
             .mapNotNull { it as? JsonObject }
@@ -64,6 +68,7 @@ internal class TProxySession(
             "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
             "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
             "reject_quic" to requiresQuicFallback(config),
+            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces),
             "work_dir" to workDir.absolutePath,
         )
 
@@ -104,8 +109,11 @@ internal class TProxySession(
         }
 
         try {
-            child.outputStream.write((options.toCompact() + "\n").toByteArray(Charsets.UTF_8))
-            child.outputStream.flush()
+            synchronized(commands) {
+                check(!closing)
+                send(child, options)
+                vpnInterfaces = initialVpnInterfaces
+            }
         } catch (_: IOException) {
             error(context.getString(R.string.tproxy_root_denied))
         }
@@ -128,15 +136,23 @@ internal class TProxySession(
         uid.takeIf { service.permission == Manifest.permission.BIND_VPN_SERVICE && it > 0 && it != Process.myUid() }
     }.toSortedSet()
 
+    fun setAndroidVpnInterfaces(names: Set<String>): Boolean = synchronized(commands) {
+        val child = process ?: return false
+        if (closing || !connected || names == vpnInterfaces) return false
+        send(child, jsonObjectOf(TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(names)))
+        vpnInterfaces = names
+        true
+    }
+
+    private fun send(child: java.lang.Process, command: JsonObject) {
+        child.outputStream.write((command.toCompact() + "\n").toByteArray(Charsets.UTF_8))
+        child.outputStream.flush()
+    }
+
     fun requestStop() {
         closing = true
-        process?.outputStream?.let { stream ->
-            runCatching {
-                stream.use {
-                    it.write('\n'.code)
-                    it.flush()
-                }
-            }
+        synchronized(commands) {
+            runCatching { process?.outputStream?.close() }
         }
     }
 

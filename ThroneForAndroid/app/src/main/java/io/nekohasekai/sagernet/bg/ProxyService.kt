@@ -4,10 +4,10 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.os.Build
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
@@ -17,7 +17,10 @@ import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 class ProxyService : Service(), BaseService.Interface {
     override val data = BaseService.Data(this)
@@ -36,7 +39,8 @@ class ProxyService : Service(), BaseService.Interface {
 
     // Confined to the main thread, including callbacks and service cleanup.
     private var upstreamVpn: Network? = null
-    private var vpnCallback: ConnectivityManager.NetworkCallback? = null
+    private var vpnCallbacks = emptyList<ConnectivityManager.NetworkCallback>()
+    private val vpnUpdateLock = Mutex()
 
     override suspend fun preInit() {
         super.preInit()
@@ -47,14 +51,14 @@ class ProxyService : Service(), BaseService.Interface {
         super.lateInit()
         val session = tproxy ?: return
         val connectivity = SagerNet.connectivity
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            private fun update() = runOnMainDispatcher {
-                if (tproxy === session && data.state == BaseService.State.Connected) {
-                    updateUpstreamVpn()
-                }
-            }
+        fun observer() = object : ConnectivityManager.NetworkCallback() {
+            private fun update() = runOnMainDispatcher { updateUpstreamVpn(session) }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                update()
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                 update()
             }
 
@@ -62,19 +66,17 @@ class ProxyService : Service(), BaseService.Interface {
                 update()
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            connectivity.registerDefaultNetworkCallback(callback)
-        } else {
-            // On older Android the default-network callback follows only the physical network.
-            val vpn = NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
-                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                .build()
-            connectivity.registerNetworkCallback(vpn, callback)
-        }
-        vpnCallback = callback
-        Logs.i("[TPROXY] Android VPN available for Throne at start: ${defaultVpn() != null}")
-        updateUpstreamVpn()
+        val defaultObserver = observer()
+        connectivity.registerDefaultNetworkCallback(defaultObserver)
+        vpnCallbacks = listOf(defaultObserver)
+        val vpn = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        val vpnObserver = observer()
+        connectivity.registerNetworkCallback(vpn, vpnObserver)
+        vpnCallbacks = vpnCallbacks + vpnObserver
+        updateUpstreamVpn(session)
     }
 
     private fun defaultVpn(): Network? {
@@ -85,14 +87,31 @@ class ProxyService : Service(), BaseService.Interface {
         }
     }
 
-    private suspend fun updateUpstreamVpn() {
+    @Suppress("DEPRECATION")
+    private fun androidVpnInterfaces(): Set<String> {
+        val connectivity = SagerNet.connectivity
+        // The VPN may apply to the browser without applying to Throne itself.
+        return connectivity.allNetworks.mapNotNullTo(mutableSetOf()) { network ->
+            if (connectivity.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) != true) {
+                return@mapNotNullTo null
+            }
+            connectivity.getLinkProperties(network)?.interfaceName
+        }
+    }
+
+    private suspend fun updateUpstreamVpn(session: TProxySession) = vpnUpdateLock.withLock {
+        if (tproxy !== session || data.state != BaseService.State.Connected) return
         val currentVpn = defaultVpn()
-        if (currentVpn == upstreamVpn) return
+        val routesChanged = try {
+            withContext(Dispatchers.IO) { session.setAndroidVpnInterfaces(androidVpnInterfaces()) }
+        } catch (error: IOException) {
+            Logs.w(error)
+            if (tproxy === session && data.state == BaseService.State.Connected) failRunner(getString(R.string.tproxy_stopped))
+            return
+        }
+        if (tproxy !== session || data.state != BaseService.State.Connected) return
+        if (!routesChanged && currentVpn == upstreamVpn) return
         upstreamVpn = currentVpn
-        Logs.i(
-            if (currentVpn != null) "[TPROXY] Android VPN is now the default network"
-            else "[TPROXY] Android VPN is no longer the default network",
-        )
         resetUpstreamConnections()
     }
 
@@ -107,16 +126,16 @@ class ProxyService : Service(), BaseService.Interface {
             }
         }
         tproxy = session
-        runInterruptible { session.start() }
+        runInterruptible { session.start(androidVpnInterfaces()) }
     }
 
     override suspend fun killProcesses(): Throwable? {
         val session = tproxy
         tproxy = null
-        vpnCallback?.let { callback ->
+        for (callback in vpnCallbacks) {
             runCatching { SagerNet.connectivity.unregisterNetworkCallback(callback) }.onFailure { Logs.w(it) }
         }
-        vpnCallback = null
+        vpnCallbacks = emptyList()
         upstreamVpn = null
         val error = withContext(Dispatchers.IO) { runCatching { session?.close() }.exceptionOrNull() }
         val coreError = super.killProcesses()

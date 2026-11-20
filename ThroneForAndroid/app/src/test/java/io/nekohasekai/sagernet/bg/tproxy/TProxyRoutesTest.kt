@@ -84,6 +84,47 @@ class TProxyRoutesTest {
     }
 
     @Test
+    fun androidVpnPacketsKeepTheirSystemRouteBeforeDnsAndQuicRules() {
+        val commands = mutableListOf<List<String>>()
+        TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add)
+            .start(rejectQuic = true, androidVpnInterfaces = setOf("tun2"))
+
+        for (firewall in listOf("iptables", "ip6tables")) {
+            val outputRules = commands.filter {
+                it.first().endsWith("/$firewall") && "-A" in it && "THRONE_TPROXY_OUT" in it
+            }
+            val firstMark = outputRules.indexOfFirst { "--set-xmark" in it }
+            assertTrue(firstMark >= 0)
+            assertTrue(outputRules.take(firstMark).any {
+                it.takeLast(4) == listOf("-o", "tun2", "-j", "RETURN")
+            })
+        }
+    }
+
+    @Test
+    fun changingVpnInterfacesUpdatesBothFamiliesAndRestoresInterceptionOnDisconnect() {
+        val commands = mutableListOf<List<String>>()
+        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add)
+        routes.start()
+        val before = commands.size
+        assertTrue(routes.setAndroidVpnInterfaces(setOf("tun1")))
+        assertTrue(routes.setAndroidVpnInterfaces(setOf("ipsec3")))
+        assertTrue(!routes.setAndroidVpnInterfaces(setOf("ipsec3")))
+        assertTrue(routes.setAndroidVpnInterfaces(emptySet()))
+
+        val updates = commands.drop(before)
+        val steps = updates.map { it[5] to it[it.indexOf("-o") + 1] }
+        assertEquals(listOf(
+            "-I" to "tun1", "-I" to "tun1", "-I" to "ipsec3", "-I" to "ipsec3",
+            "-D" to "tun1", "-D" to "tun1", "-D" to "ipsec3", "-D" to "ipsec3",
+        ), steps)
+        assertEquals(4, updates.count { it.first().endsWith("/iptables") })
+        assertEquals(4, updates.count { it.first().endsWith("/ip6tables") })
+        assertTrue(updates.all { "THRONE_TPROXY_OUT" in it && it.takeLast(2) == listOf("-j", "RETURN") })
+        routes.close()
+    }
+
+    @Test
     fun packetCountsReportOnlyTransparentProxyRules() {
         val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { }
         val stats = routes.packetCounts { command ->

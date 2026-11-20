@@ -32,6 +32,7 @@ internal object TProxyRootMain {
     const val ERROR = "THRONE_TPROXY_ERROR"
     const val LOG = "THRONE_TPROXY_LOG"
     const val ROOT_DENIED = "root-denied"
+    const val VPN_INTERFACES = "vpn_interfaces"
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -90,13 +91,23 @@ internal object TProxyRootMain {
                 val cleanup = Thread { runCatching { routes.close() } }
                 Runtime.getRuntime().addShutdownHook(cleanup)
                 try {
-                    routes.start(options.bool("reject_quic")) { error ->
+                    val vpnInterfaces = options.array(VPN_INTERFACES).strings().toSet()
+                    routes.start(options.bool("reject_quic"), vpnInterfaces) { error ->
                         println("$LOG QUIC rejection unavailable: ${error.message?.lineSequence()?.firstOrNull().orEmpty()}")
                     }
                     println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
+                    println("$LOG Android VPN egress interfaces: ${vpnInterfaces.joinToString().ifEmpty { "none" }}")
                     println(READY)
-                    // The app sends a stop byte. EOF also ends the session if the app dies.
-                    input.read()
+                    // EOF ends the session, including when the app dies.
+                    while (true) {
+                        val command = input.readLine()?.let(JsonInput::parseObject) ?: break
+                        check(command.isArray(VPN_INTERFACES)) { "Invalid TPROXY control message" }
+                        val nextInterfaces = command.array(VPN_INTERFACES).strings().toSet()
+                        if (routes.setAndroidVpnInterfaces(nextInterfaces)) {
+                            println("$LOG Android VPN egress interfaces: ${nextInterfaces.joinToString().ifEmpty { "none" }}")
+                            box.resetNetwork()
+                        }
+                    }
                 } finally {
                     runCatching { routes.packetCounts(::run) }.onSuccess { println("$LOG $it") }
                     routes.close()

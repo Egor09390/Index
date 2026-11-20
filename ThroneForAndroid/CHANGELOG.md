@@ -1,3 +1,8 @@
+#### 2.0.7-quality.11
+
+* Let Android VPN routes reach their VPN interface directly in TPROXY mode so they use the Android VPN's exit IP.
+* Update IPv4 and IPv6 interception when the VPN interface changes, honoring Android's split-tunnel policy.
+
 #### 2.0.7-quality.10
 
 * Report the local TPROXY relay's loopback interface to the core at startup.

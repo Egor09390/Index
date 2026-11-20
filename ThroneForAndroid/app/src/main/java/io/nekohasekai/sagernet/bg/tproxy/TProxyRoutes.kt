@@ -14,6 +14,7 @@ internal class TProxyRoutes(
     private val output = "THRONE_TPROXY_OUT"
     private val prerouting = "THRONE_TPROXY_IN"
     private val table = (100_000L + uid).toString()
+    private var vpnInterfaces = emptySet<String>()
 
     private data class Family(
         val selector: String,
@@ -32,8 +33,13 @@ internal class TProxyRoutes(
     )
 
     @Synchronized
-    fun start(rejectQuic: Boolean = false, onQuicRuleError: (Exception) -> Unit = {}) {
+    fun start(
+        rejectQuic: Boolean = false,
+        androidVpnInterfaces: Set<String> = emptySet(),
+        onQuicRuleError: (Exception) -> Unit = {},
+    ) {
         check(undo.isEmpty())
+        vpnInterfaces = checkedVpnInterfaces(androidVpnInterfaces)
         try {
             for (family in families) prepare(family)
             for (family in families) {
@@ -68,6 +74,9 @@ internal class TProxyRoutes(
 
         fun outputRule(vararg args: String) = run(family.firewall("-A", output, *args))
         outputRule("-o", "lo", "-j", "RETURN")
+        for (name in vpnInterfaces) {
+            outputRule("-o", name, "-j", "RETURN")
+        }
         outputRule("-m", "owner", "--uid-owner", "0", "-j", "RETURN")
         outputRule("-m", "owner", "--uid-owner", uid.toString(), "-j", "RETURN")
         // A VPN client can contact its server before calling protect() or establishing a VPN.
@@ -97,6 +106,30 @@ internal class TProxyRoutes(
                 "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
             ))
         }
+    }
+
+    @Synchronized
+    fun setAndroidVpnInterfaces(names: Set<String>): Boolean {
+        check(undo.isNotEmpty())
+        val next = checkedVpnInterfaces(names)
+        if (next == vpnInterfaces) return false
+        val added = next - vpnInterfaces
+        val removed = vpnInterfaces - next
+        for (family in families) {
+            // OUTPUT already has Android's chosen egress. Leave its VPN-bound packets unmarked,
+            // including DNS and QUIC, so Android's per-app and per-destination VPN policy applies.
+            for (name in added) run(family.firewall("-I", output, "1", "-o", name, "-j", "RETURN"))
+        }
+        for (family in families) {
+            for (name in removed) run(family.firewall("-D", output, "-o", name, "-j", "RETURN"))
+        }
+        vpnInterfaces = next
+        return true
+    }
+
+    private fun checkedVpnInterfaces(names: Set<String>): Set<String> {
+        require(names.all { it != "lo" && INTERFACE_NAME.matches(it) }) { "Invalid Android VPN interface" }
+        return names.toSortedSet()
     }
 
     private fun installQuicRejection(family: Family) {
@@ -158,5 +191,6 @@ internal class TProxyRoutes(
         const val MARK = "0x10000000/0x10000000"
         const val ANDROID_VPN_PROTECTED = "0x00020000/0x00020000"
         const val PRIORITY = "9000"
+        val INTERFACE_NAME = Regex("[A-Za-z0-9_.-]{1,15}")
     }
 }
