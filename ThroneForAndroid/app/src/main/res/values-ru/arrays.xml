@@ -189,16 +189,6 @@
         <item>reply</item>
     </string-array>
 
-    <string-array name="service_mode_values">
-        <item>vpn</item>
-        <item>proxy</item>
-    </string-array>
-
-    <string-array name="service_modes">
-        <item>@string/service_mode_vpn</item>
-        <item>@string/service_mode_proxy</item>
-    </string-array>
-
     <string-array name="snell_network_entry">
         <item>Автоматически</item>
         <item>TCP</item>

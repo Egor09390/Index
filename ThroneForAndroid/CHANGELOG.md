@@ -1,3 +1,7 @@
+#### 2.0.7-quality.4
+
+* Show TPROXY (root) in the localized service mode menu.
+
 #### 2.0.7-quality.3
 
 * Run TPROXY on Android 14 or later using the special-use foreground service type.

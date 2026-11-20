@@ -98,12 +98,12 @@
         <item>xchacha20</item>
     </string-array>
 
-    <string-array name="service_modes">
+    <string-array name="service_modes" translatable="false">
         <item>@string/service_mode_vpn</item>
         <item>@string/service_mode_proxy</item>
         <item>@string/service_mode_tproxy</item>
     </string-array>
-    <string-array name="service_mode_values">
+    <string-array name="service_mode_values" translatable="false">
         <item>vpn</item>
         <item>proxy</item>
         <item>tproxy</item>
