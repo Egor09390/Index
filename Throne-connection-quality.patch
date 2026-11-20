@@ -43,10 +43,14 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..6e4b002 100644
+index 6460f87..a0f31ab 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,23 @@
+@@ -1,3 +1,27 @@
++#### 2.0.7-quality.5
++
++* Put the root TPROXY core cache in the app cache directory so it can start.
++
 +#### 2.0.7-quality.4
 +
 +* Show TPROXY (root) in the localized service mode menu.
@@ -499,10 +503,10 @@ index 9cfc731..b9b2579 100644
          const val SERVICE_MAX_PROFILES = 100
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 new file mode 100644
-index 0000000..adb393a
+index 0000000..b68f32f
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,125 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.os.Process
@@ -517,10 +521,12 @@ index 0000000..adb393a
 +import io.throneproj.mobile.NetworkInterfaceIterator
 +import io.throneproj.mobile.Notification
 +import io.throneproj.mobile.PlatformInterface
++import io.throneproj.mobile.SetupOptions
 +import io.throneproj.mobile.StartOptions
 +import io.throneproj.mobile.StringIterator
 +import io.throneproj.mobile.TunOptions
 +import io.throneproj.mobile.WIFIState
++import java.io.File
 +import kotlin.system.exitProcess
 +
 +/** Runs from the installed APK under su. The app keeps stdin open for the lifetime of the session. */
@@ -541,6 +547,17 @@ index 0000000..adb393a
 +            val target = options.obj("target")
 +            check(uid > 0 && port in 1024..65535 && target.int("server_port") in 1..65535)
 +            check(target.string("server") == "127.0.0.1")
++            val workDir = File(options.string("work_dir"))
++            check(workDir.isAbsolute && workDir.isDirectory && workDir.canWrite()) {
++                "The TPROXY cache directory is not writable"
++            }
++            // The root process has its own core and does not inherit the app's Mobile.setup().
++            val path = workDir.absolutePath
++            Mobile.setup(SetupOptions().apply {
++                basePath = path
++                workingPath = path
++                tempPath = path
++            })
 +            target["type"] = "socks"
 +            target["tag"] = "throne"
 +            target["version"] = "5"
@@ -736,10 +753,10 @@ index 0000000..fb3d42b
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 new file mode 100644
-index 0000000..c4232ec
+index 0000000..4cf29b1
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,126 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.content.Context
@@ -793,8 +810,11 @@ index 0000000..c4232ec
 +        // These are interface-local even when the user includes private unicast networks in the proxy.
 +        bypass.add("169.254.0.0/16")
 +        bypass.add("fe80::/10")
++        val workDir = File(context.cacheDir, "tproxy")
++        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
 +        val options = jsonObjectOf(
 +            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
++            "work_dir" to workDir.absolutePath,
 +        )
 +
 +        val appInfo = context.applicationInfo
@@ -1771,7 +1791,7 @@ index 0000000..cd96eb2
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..6d7434e 100644
+index 751051e..e2034c4 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -1779,7 +1799,7 @@ index 751051e..6d7434e 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.4
-+VERSION_CODE=117
++VERSION_NAME=2.0.7-quality.5
++VERSION_CODE=118
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

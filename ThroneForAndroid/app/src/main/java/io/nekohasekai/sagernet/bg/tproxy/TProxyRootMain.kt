@@ -12,10 +12,12 @@ import io.throneproj.mobile.Mobile
 import io.throneproj.mobile.NetworkInterfaceIterator
 import io.throneproj.mobile.Notification
 import io.throneproj.mobile.PlatformInterface
+import io.throneproj.mobile.SetupOptions
 import io.throneproj.mobile.StartOptions
 import io.throneproj.mobile.StringIterator
 import io.throneproj.mobile.TunOptions
 import io.throneproj.mobile.WIFIState
+import java.io.File
 import kotlin.system.exitProcess
 
 /** Runs from the installed APK under su. The app keeps stdin open for the lifetime of the session. */
@@ -36,6 +38,17 @@ internal object TProxyRootMain {
             val target = options.obj("target")
             check(uid > 0 && port in 1024..65535 && target.int("server_port") in 1..65535)
             check(target.string("server") == "127.0.0.1")
+            val workDir = File(options.string("work_dir"))
+            check(workDir.isAbsolute && workDir.isDirectory && workDir.canWrite()) {
+                "The TPROXY cache directory is not writable"
+            }
+            // The root process has its own core and does not inherit the app's Mobile.setup().
+            val path = workDir.absolutePath
+            Mobile.setup(SetupOptions().apply {
+                basePath = path
+                workingPath = path
+                tempPath = path
+            })
             target["type"] = "socks"
             target["tag"] = "throne"
             target["version"] = "5"

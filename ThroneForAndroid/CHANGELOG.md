@@ -1,3 +1,7 @@
+#### 2.0.7-quality.5
+
+* Put the root TPROXY core cache in the app cache directory so it can start.
+
 #### 2.0.7-quality.4
 
 * Show TPROXY (root) in the localized service mode menu.

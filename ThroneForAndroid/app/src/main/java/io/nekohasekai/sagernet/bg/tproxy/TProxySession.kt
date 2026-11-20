@@ -51,8 +51,11 @@ internal class TProxySession(
         // These are interface-local even when the user includes private unicast networks in the proxy.
         bypass.add("169.254.0.0/16")
         bypass.add("fe80::/10")
+        val workDir = File(context.cacheDir, "tproxy")
+        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
         val options = jsonObjectOf(
             "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
+            "work_dir" to workDir.absolutePath,
         )
 
         val appInfo = context.applicationInfo
