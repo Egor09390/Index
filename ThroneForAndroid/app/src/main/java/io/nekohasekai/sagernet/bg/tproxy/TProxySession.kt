@@ -24,7 +24,6 @@ import moe.matsuri.nb4a.utils.CoreLog
 
 internal class TProxySession(
     private val context: Context,
-    private val coreConfig: String,
     private val onUnexpectedStop: () -> Unit,
 ) : Closeable {
     private val ready = CountDownLatch(1)
@@ -39,39 +38,9 @@ internal class TProxySession(
     private val commands = Any()
     private var vpnInterfaces = emptySet<String>()
 
-    fun start(initialVpnInterfaces: Set<String>) {
-        val config = JsonInput.parseObject(coreConfig)
-        val mixed = config.array("inbounds")
-            .mapNotNull { it as? JsonObject }
-            .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
-        if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
-            mixed.int("listen_port") !in 1..65535) {
-            error(context.getString(R.string.tproxy_no_ingress))
-        }
-
-        val target = jsonObjectOf("server" to "127.0.0.1", "server_port" to mixed.int("listen_port"))
-        (mixed.array("users").firstOrNull() as? JsonObject)?.let {
-            target["username"] = it.string("username")
-            target["password"] = it.string("password")
-        }
-        val port = ports.reserve(1).single()
-        check(port >= 1024)
-        val bypass = JsonArray()
-        if (!DataStore.disablePrivateRangeBypass) DataStore.vpnPrivateRanges.forEach { bypass.add(it) }
-        // These are interface-local even when the user includes private unicast networks in the proxy.
-        bypass.add("169.254.0.0/16")
-        bypass.add("fe80::/10")
-        val workDir = File(context.cacheDir, "tproxy")
-        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
-        val vpnUids = vpnClientUids()
-        val options = jsonObjectOf(
-            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
-            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
-            "reject_quic" to requiresQuicFallback(config),
-            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces.sorted()),
-            "work_dir" to workDir.absolutePath,
-        )
-
+    /** Start su and the JVM while the main core is being prepared. The child waits for its config. */
+    fun prepareRootProcess() {
+        check(process == null && !closing)
         val appInfo = context.applicationInfo
         val abiRuntime = if (Process.is64Bit()) "/system/bin/app_process64" else "/system/bin/app_process32"
         val runtime = if (File(abiRuntime).canExecute()) abiRuntime else "/system/bin/app_process"
@@ -107,7 +76,42 @@ internal class TProxySession(
                 if (connected && !closing) onUnexpectedStop()
             }
         }
+    }
 
+    fun start(coreConfig: String, initialVpnInterfaces: Set<String>) {
+        val config = JsonInput.parseObject(coreConfig)
+        val mixed = config.array("inbounds")
+            .mapNotNull { it as? JsonObject }
+            .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
+        if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
+            mixed.int("listen_port") !in 1..65535) {
+            error(context.getString(R.string.tproxy_no_ingress))
+        }
+
+        val target = jsonObjectOf("server" to "127.0.0.1", "server_port" to mixed.int("listen_port"))
+        (mixed.array("users").firstOrNull() as? JsonObject)?.let {
+            target["username"] = it.string("username")
+            target["password"] = it.string("password")
+        }
+        val port = ports.reserve(1).single()
+        check(port >= 1024)
+        val bypass = JsonArray()
+        if (!DataStore.disablePrivateRangeBypass) DataStore.vpnPrivateRanges.forEach { bypass.add(it) }
+        // These are interface-local even when the user includes private unicast networks in the proxy.
+        bypass.add("169.254.0.0/16")
+        bypass.add("fe80::/10")
+        val workDir = File(context.cacheDir, "tproxy")
+        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
+        val vpnUids = vpnClientUids()
+        val options = jsonObjectOf(
+            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
+            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
+            "reject_quic" to requiresQuicFallback(config),
+            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces.sorted()),
+            "work_dir" to workDir.absolutePath,
+        )
+
+        val child = checkNotNull(process)
         try {
             synchronized(commands) {
                 check(!closing)

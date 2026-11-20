@@ -607,12 +607,14 @@ class BaseService {
             DataStore.baseService = this
 
             if (data.state != State.Stopped) return Service.START_NOT_STICKY
-            startProxy()
+            startProxy(intent?.getLongExtra(Action.EXTRA_START_REQUEST_TIME, 0L) ?: 0L)
             return Service.START_NOT_STICKY
         }
 
         /** Starts the selected profile; the notification and the receiver of a restart are reused. */
-        fun startProxy() {
+        fun startProxy(requestedAt: Long = 0L) {
+            val serviceStartedAt = SystemClock.elapsedRealtime()
+            val requestTime = requestedAt.takeIf { it in 1..serviceStartedAt } ?: serviceStartedAt
             DataStore.baseService = this
             val data = data
             val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
@@ -680,13 +682,23 @@ class BaseService {
             data.connectingJob = CoroutineScope(Dispatchers.Main).launch {
                 try {
                     preInit()
+                    val prepareFinishedAt = SystemClock.elapsedRealtime()
                     withContext(coreDispatcher) { proxy.init() }
+                    val configFinishedAt = SystemClock.elapsedRealtime()
                     DataStore.currentProfile = profile.id
                     DataStore.runningProfiles = proxy.config.involvedProfileIds.map { it.toString() }
                     DataStore.runningRouteId = proxy.routeId
 
                     withContext(coreDispatcher) { startProcesses() }
+                    val readyAt = SystemClock.elapsedRealtime()
                     data.changeState(State.Connected)
+                    Logs.i(
+                        "Connection startup total=${readyAt - requestTime}ms " +
+                            "process=${serviceStartedAt - requestTime}ms " +
+                            "prepare=${prepareFinishedAt - serviceStartedAt}ms " +
+                            "config=${configFinishedAt - prepareFinishedAt}ms " +
+                            "activate=${readyAt - configFinishedAt}ms"
+                    )
                     runCatching { watchWifiRules(proxy) }.onFailure { Logs.w(it) }
 
                     lateInit()

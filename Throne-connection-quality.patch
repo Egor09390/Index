@@ -43,10 +43,16 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..809f91d 100644
+index 6460f87..23ee9cb 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,56 @@
+@@ -1,3 +1,62 @@
++#### 2.0.7-quality.13
++
++* Start the TPROXY root process while the main core prepares the connection.
++* Install private firewall chains in batches on devices that support it, with the original rule-by-rule fallback.
++* Report connection startup timings in the log.
++
 +#### 2.0.7-quality.12
 +
 +* Simplify the profiles toolbar, overflow menu, drawer and settings to match the marked screenshots.
@@ -132,7 +138,7 @@ index 92be488..a14178a 100644
          <service
              android:name="io.nekohasekai.sagernet.bg.VpnService"
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/Constants.kt b/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
-index 7a2bf3b..8976bc4 100644
+index 7a2bf3b..d464a46 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
 @@ -14,6 +14,7 @@ object Key {
@@ -143,8 +149,37 @@ index 7a2bf3b..8976bc4 100644
  
      const val PROXY_APPS = "proxyApps"
      const val BYPASS_MODE = "bypassMode"
+@@ -99,4 +100,5 @@ object Action {
+     /** The auto-selector [EXTRA_PROFILE_ID] goes back to automatic in the running core. */
+     const val AUTO_SELECTOR_AUTOMATIC = "io.nekohasekai.sagernet.AUTO_SELECTOR_AUTOMATIC"
+     const val EXTRA_PROFILE_ID = "profileId"
++    const val EXTRA_START_REQUEST_TIME = "startRequestElapsedRealtime"
+ }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt b/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt
+index 0dd7bb6..76943a0 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt
+@@ -13,6 +13,7 @@ import android.net.Network
+ import android.os.Build
+ import android.os.PowerManager
+ import android.os.StrictMode
++import android.os.SystemClock
+ import android.os.UserManager
+ import androidx.annotation.RequiresApi
+ import androidx.core.content.ContextCompat
+@@ -211,7 +212,9 @@ class SagerNet : Application(),
+         }
+ 
+         fun startService() = ContextCompat.startForegroundService(
+-            application, Intent(application, SagerConnection.serviceClass)
++            application,
++            Intent(application, SagerConnection.serviceClass)
++                .putExtra(Action.EXTRA_START_REQUEST_TIME, SystemClock.elapsedRealtime()),
+         )
+ 
+         fun reloadService() =
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
-index 67d1624..3ead639 100644
+index 67d1624..04e2ede 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
 @@ -326,6 +326,11 @@ class BaseService {
@@ -159,11 +194,52 @@ index 67d1624..3ead639 100644
          fun startRunner() {
              this as Context
              if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, javaClass))
+@@ -602,12 +607,14 @@ class BaseService {
+             DataStore.baseService = this
+ 
+             if (data.state != State.Stopped) return Service.START_NOT_STICKY
+-            startProxy()
++            startProxy(intent?.getLongExtra(Action.EXTRA_START_REQUEST_TIME, 0L) ?: 0L)
+             return Service.START_NOT_STICKY
+         }
+ 
+         /** Starts the selected profile; the notification and the receiver of a restart are reused. */
+-        fun startProxy() {
++        fun startProxy(requestedAt: Long = 0L) {
++            val serviceStartedAt = SystemClock.elapsedRealtime()
++            val requestTime = requestedAt.takeIf { it in 1..serviceStartedAt } ?: serviceStartedAt
+             DataStore.baseService = this
+             val data = data
+             val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
+@@ -675,13 +682,23 @@ class BaseService {
+             data.connectingJob = CoroutineScope(Dispatchers.Main).launch {
+                 try {
+                     preInit()
++                    val prepareFinishedAt = SystemClock.elapsedRealtime()
+                     withContext(coreDispatcher) { proxy.init() }
++                    val configFinishedAt = SystemClock.elapsedRealtime()
+                     DataStore.currentProfile = profile.id
+                     DataStore.runningProfiles = proxy.config.involvedProfileIds.map { it.toString() }
+                     DataStore.runningRouteId = proxy.routeId
+ 
+                     withContext(coreDispatcher) { startProcesses() }
++                    val readyAt = SystemClock.elapsedRealtime()
+                     data.changeState(State.Connected)
++                    Logs.i(
++                        "Connection startup total=${readyAt - requestTime}ms " +
++                            "process=${serviceStartedAt - requestTime}ms " +
++                            "prepare=${prepareFinishedAt - serviceStartedAt}ms " +
++                            "config=${configFinishedAt - prepareFinishedAt}ms " +
++                            "activate=${readyAt - configFinishedAt}ms"
++                    )
+                     runCatching { watchWifiRules(proxy) }.onFailure { Logs.w(it) }
+ 
+                     lateInit()
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-index f38a717..ebd9765 100644
+index f38a717..878f98e 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-@@ -2,15 +2,157 @@ package io.nekohasekai.sagernet.bg
+@@ -2,15 +2,160 @@ package io.nekohasekai.sagernet.bg
  
  import android.app.Service
  import android.content.Intent
@@ -209,8 +285,18 @@ index f38a717..ebd9765 100644
 +    private val vpnUpdateLock = Mutex()
 +
 +    override suspend fun preInit() {
++        if (DataStore.serviceMode == Key.MODE_TPROXY) {
++            val proxy = checkNotNull(data.proxy)
++            val session = TProxySession(this) {
++                runOnMainDispatcher {
++                    if (data.proxy === proxy && data.state.canStop) failRunner(getString(R.string.tproxy_stopped))
++                }
++            }
++            tproxy = session
++            withContext(Dispatchers.IO) { session.prepareRootProcess() }
++            upstreamVpn = defaultVpn()
++        }
 +        super.preInit()
-+        if (DataStore.serviceMode == Key.MODE_TPROXY) upstreamVpn = defaultVpn()
 +    }
 +
 +    override suspend fun lateInit() {
@@ -286,17 +372,10 @@ index f38a717..ebd9765 100644
 +    }
 +
 +    override suspend fun startProcesses() {
-+        val rootMode = DataStore.serviceMode == Key.MODE_TPROXY
 +        super.startProcesses()
-+        if (!rootMode) return
-+        val proxy = checkNotNull(data.proxy)
-+        val session = TProxySession(this, proxy.config.coreConfig) {
-+            runOnMainDispatcher {
-+                if (data.proxy === proxy && data.state.canStop) failRunner(getString(R.string.tproxy_stopped))
-+            }
-+        }
-+        tproxy = session
-+        runInterruptible { session.start(androidVpnInterfaces()) }
++        val session = tproxy ?: return
++        val coreConfig = checkNotNull(data.proxy).config.coreConfig
++        runInterruptible { session.start(coreConfig, androidVpnInterfaces()) }
 +    }
 +
 +    override suspend fun killProcesses(): Throwable? {
@@ -646,13 +725,14 @@ index 9cfc731..b9b2579 100644
          const val SERVICE_MAX_PROFILES = 100
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 new file mode 100644
-index 0000000..3d66064
+index 0000000..5285104
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,192 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.os.Process
++import android.os.SystemClock
 +import android.system.OsConstants
 +import io.throneproj.mobile.NetworkInterface as CoreNetworkInterface
 +import java.net.NetworkInterface
@@ -692,6 +772,7 @@ index 0000000..3d66064
 +            check(Process.myUid() == 0) { ROOT_DENIED }
 +            val input = System.`in`.bufferedReader()
 +            val options = input.readLine()?.let(JsonInput::parseObject) ?: return
++            val setupStartedAt = SystemClock.elapsedRealtime()
 +            val uid = options.int("uid")
 +            val port = options.int("port")
 +            val target = options.obj("target")
@@ -744,9 +825,20 @@ index 0000000..3d66064
 +                Runtime.getRuntime().addShutdownHook(cleanup)
 +                try {
 +                    val vpnInterfaces = options.array(VPN_INTERFACES).strings().toSet()
-+                    routes.start(options.bool("reject_quic"), vpnInterfaces) { error ->
++                    val rulesStartedAt = SystemClock.elapsedRealtime()
++                    var batches = 0
++                    routes.start(options.bool("reject_quic"), vpnInterfaces, restore = { command, input ->
++                        try {
++                            run(command, input)
++                            batches++
++                        } catch (error: Exception) {
++                            println("$LOG Firewall batch unavailable for ${command.first().substringAfterLast('/')}")
++                            throw error
++                        }
++                    }) { error ->
 +                        println("$LOG QUIC rejection unavailable: ${error.message?.lineSequence()?.firstOrNull().orEmpty()}")
 +                    }
++                    println("$LOG Startup relay=${rulesStartedAt - setupStartedAt}ms firewall=${SystemClock.elapsedRealtime() - rulesStartedAt}ms batches=$batches/2")
 +                    println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
 +                    println("$LOG Android VPN egress interfaces: ${vpnInterfaces.joinToString().ifEmpty { "none" }}")
 +                    println(READY)
@@ -761,7 +853,7 @@ index 0000000..3d66064
 +                        }
 +                    }
 +                } finally {
-+                    runCatching { routes.packetCounts(::run) }.onSuccess { println("$LOG $it") }
++                    runCatching { routes.packetCounts { command -> run(command) } }.onSuccess { println("$LOG $it") }
 +                    routes.close()
 +                    Runtime.getRuntime().removeShutdownHook(cleanup)
 +                }
@@ -785,9 +877,11 @@ index 0000000..3d66064
 +        exitProcess(0)
 +    }
 +
-+    private fun run(command: List<String>): String {
++    private fun run(command: List<String>, input: String? = null): String {
 +        val process = ProcessBuilder(command).redirectErrorStream(true).start()
-+        process.outputStream.close()
++        process.outputStream.use { stream ->
++            if (input != null) stream.write(input.toByteArray(Charsets.UTF_8))
++        }
 +        val output = process.inputStream.bufferedReader().use { it.readText().trim() }
 +        if (process.waitFor() != 0) {
 +            val name = command.first().substringAfterLast('/')
@@ -829,10 +923,10 @@ index 0000000..3d66064
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
 new file mode 100644
-index 0000000..a0fc908
+index 0000000..7b45d10
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,220 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import java.io.Closeable
@@ -871,12 +965,13 @@ index 0000000..a0fc908
 +    fun start(
 +        rejectQuic: Boolean = false,
 +        androidVpnInterfaces: Set<String> = emptySet(),
++        restore: ((List<String>, String) -> Unit)? = null,
 +        onQuicRuleError: (Exception) -> Unit = {},
 +    ) {
 +        check(undo.isEmpty())
 +        vpnInterfaces = checkedVpnInterfaces(androidVpnInterfaces)
 +        try {
-+            for (family in families) prepare(family)
++            for (family in families) prepare(family, restore)
 +            for (family in families) {
 +                hook(family, "PREROUTING", "-i", "lo", "-m", "mark", "--mark", MARK, "-j", prerouting)
 +            }
@@ -896,9 +991,25 @@ index 0000000..a0fc908
 +        }
 +    }
 +
-+    private fun prepare(family: Family) {
-+        for (chain in listOf(output, prerouting)) {
-+            run(family.firewall("-N", chain))
++    private fun prepare(family: Family, restore: ((List<String>, String) -> Unit)?) {
++        val chains = listOf(output, prerouting)
++        val rules = chainRules(family)
++        val commands = chains.map { listOf("-N", it) } + rules
++        // The restore parser reads text, unlike ProcessBuilder's argument list. Use it only for plain tokens
++        // and only one table/commit, so a rejected batch can safely fall back to individual commands.
++        val restored = if (restore != null && commands.all { command -> command.all(RESTORE_TOKEN::matches) }) {
++            val input = commands.joinToString("\n", prefix = "*mangle\n", postfix = "\nCOMMIT\n") { it.joinToString(" ") }
++            try {
++                restore(listOf("/system/bin/${family.firewall}-restore", "-w", "2", "--noflush"), input)
++                true
++            } catch (_: Exception) {
++                false
++            }
++        } else {
++            false
++        }
++        for (chain in chains) {
++            if (!restored) run(family.firewall("-N", chain))
 +            undo.addLast(family.firewall("-X", chain))
 +            undo.addLast(family.firewall("-F", chain))
 +        }
@@ -907,7 +1018,13 @@ index 0000000..a0fc908
 +        val rule = arrayOf("pref", PRIORITY, "fwmark", MARK, "lookup", table)
 +        apply(family.ip("rule", "add", *rule), family.ip("rule", "del", *rule))
 +
-+        fun outputRule(vararg args: String) = run(family.firewall("-A", output, *args))
++        if (!restored) rules.forEach { run(family.firewall(*it.toTypedArray())) }
++    }
++
++    private fun chainRules(family: Family): List<List<String>> = buildList {
++        fun outputRule(vararg args: String) {
++            add(listOf("-A", output) + args)
++        }
 +        outputRule("-o", "lo", "-j", "RETURN")
 +        for (name in vpnInterfaces) {
 +            outputRule("-o", name, "-j", "RETURN")
@@ -924,7 +1041,7 @@ index 0000000..a0fc908
 +        if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
 +
 +        // Replies from a transparent socket must not enter the listener again.
-+        run(family.firewall("-A", prerouting, "-m", "conntrack", "--ctdir", "REPLY", "-j", "RETURN"))
++        add(listOf("-A", prerouting, "-m", "conntrack", "--ctdir", "REPLY", "-j", "RETURN"))
 +
 +        // DNS to a LAN resolver still reaches Throne's DNS route before the LAN exclusions.
 +        for (protocol in listOf("tcp", "udp")) {
@@ -936,7 +1053,7 @@ index 0000000..a0fc908
 +        }
 +        for (protocol in listOf("tcp", "udp")) {
 +            outputRule("-p", protocol, "-j", "MARK", "--set-xmark", MARK)
-+            run(family.firewall(
++            add(listOf(
 +                "-A", prerouting, "-p", protocol, "-j", "TPROXY",
 +                "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
 +            ))
@@ -1027,14 +1144,15 @@ index 0000000..a0fc908
 +        const val ANDROID_VPN_PROTECTED = "0x00020000/0x00020000"
 +        const val PRIORITY = "9000"
 +        val INTERFACE_NAME = Regex("[A-Za-z0-9_.-]{1,15}")
++        val RESTORE_TOKEN = Regex("[A-Za-z0-9_.:/-]+")
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 new file mode 100644
-index 0000000..99313c0
+index 0000000..4df5ca9
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,176 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.Manifest
@@ -1061,7 +1179,6 @@ index 0000000..99313c0
 +
 +internal class TProxySession(
 +    private val context: Context,
-+    private val coreConfig: String,
 +    private val onUnexpectedStop: () -> Unit,
 +) : Closeable {
 +    private val ready = CountDownLatch(1)
@@ -1076,39 +1193,9 @@ index 0000000..99313c0
 +    private val commands = Any()
 +    private var vpnInterfaces = emptySet<String>()
 +
-+    fun start(initialVpnInterfaces: Set<String>) {
-+        val config = JsonInput.parseObject(coreConfig)
-+        val mixed = config.array("inbounds")
-+            .mapNotNull { it as? JsonObject }
-+            .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
-+        if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
-+            mixed.int("listen_port") !in 1..65535) {
-+            error(context.getString(R.string.tproxy_no_ingress))
-+        }
-+
-+        val target = jsonObjectOf("server" to "127.0.0.1", "server_port" to mixed.int("listen_port"))
-+        (mixed.array("users").firstOrNull() as? JsonObject)?.let {
-+            target["username"] = it.string("username")
-+            target["password"] = it.string("password")
-+        }
-+        val port = ports.reserve(1).single()
-+        check(port >= 1024)
-+        val bypass = JsonArray()
-+        if (!DataStore.disablePrivateRangeBypass) DataStore.vpnPrivateRanges.forEach { bypass.add(it) }
-+        // These are interface-local even when the user includes private unicast networks in the proxy.
-+        bypass.add("169.254.0.0/16")
-+        bypass.add("fe80::/10")
-+        val workDir = File(context.cacheDir, "tproxy")
-+        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
-+        val vpnUids = vpnClientUids()
-+        val options = jsonObjectOf(
-+            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
-+            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
-+            "reject_quic" to requiresQuicFallback(config),
-+            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces.sorted()),
-+            "work_dir" to workDir.absolutePath,
-+        )
-+
++    /** Start su and the JVM while the main core is being prepared. The child waits for its config. */
++    fun prepareRootProcess() {
++        check(process == null && !closing)
 +        val appInfo = context.applicationInfo
 +        val abiRuntime = if (Process.is64Bit()) "/system/bin/app_process64" else "/system/bin/app_process32"
 +        val runtime = if (File(abiRuntime).canExecute()) abiRuntime else "/system/bin/app_process"
@@ -1144,7 +1231,42 @@ index 0000000..99313c0
 +                if (connected && !closing) onUnexpectedStop()
 +            }
 +        }
++    }
 +
++    fun start(coreConfig: String, initialVpnInterfaces: Set<String>) {
++        val config = JsonInput.parseObject(coreConfig)
++        val mixed = config.array("inbounds")
++            .mapNotNull { it as? JsonObject }
++            .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
++        if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
++            mixed.int("listen_port") !in 1..65535) {
++            error(context.getString(R.string.tproxy_no_ingress))
++        }
++
++        val target = jsonObjectOf("server" to "127.0.0.1", "server_port" to mixed.int("listen_port"))
++        (mixed.array("users").firstOrNull() as? JsonObject)?.let {
++            target["username"] = it.string("username")
++            target["password"] = it.string("password")
++        }
++        val port = ports.reserve(1).single()
++        check(port >= 1024)
++        val bypass = JsonArray()
++        if (!DataStore.disablePrivateRangeBypass) DataStore.vpnPrivateRanges.forEach { bypass.add(it) }
++        // These are interface-local even when the user includes private unicast networks in the proxy.
++        bypass.add("169.254.0.0/16")
++        bypass.add("fe80::/10")
++        val workDir = File(context.cacheDir, "tproxy")
++        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
++        val vpnUids = vpnClientUids()
++        val options = jsonObjectOf(
++            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
++            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
++            "reject_quic" to requiresQuicFallback(config),
++            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces.sorted()),
++            "work_dir" to workDir.absolutePath,
++        )
++
++        val child = checkNotNull(process)
 +        try {
 +            synchronized(commands) {
 +                check(!closing)
@@ -2822,10 +2944,10 @@ index f7e7747..e0f0b4e 100644
  </PreferenceScreen>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
-index 0000000..197e1b2
+index 0000000..12edd03
 --- /dev/null
 +++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,221 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import org.junit.Assert.assertEquals
@@ -2953,6 +3075,52 @@ index 0000000..197e1b2
 +    }
 +
 +    @Test
++    fun batchedChainsMatchIndividualRulesAndAreRemovedAfterOutputHooks() {
++        val ranges = listOf("10.0.0.0/8", "fc00::/7")
++        val uids = setOf(10620, 10689)
++        val individual = mutableListOf<List<String>>()
++        TProxyRoutes(10231, 30080, ranges, uids, individual::add)
++            .start(rejectQuic = true, androidVpnInterfaces = setOf("tun2"))
++
++        val commands = mutableListOf<List<String>>()
++        val batches = mutableMapOf<String, String>()
++        val routes = TProxyRoutes(10231, 30080, ranges, uids, commands::add)
++        routes.start(rejectQuic = true, androidVpnInterfaces = setOf("tun2"), restore = { command, input ->
++            assertEquals(listOf("-w", "2", "--noflush"), command.drop(1))
++            batches[command.first().removeSuffix("-restore")] = input
++        })
++
++        assertEquals(2, batches.size)
++        for ((firewall, input) in batches) {
++            val expected = individual.filter { it.first() == firewall && (it[5] == "-N" || it[5] == "-A") }
++            assertEquals(expected.map { it.drop(5).joinToString(" ") }, input.trimEnd().lines().also { assertEquals("*mangle", it.first()); assertEquals("COMMIT", it.last()) }.drop(1).dropLast(1))
++        }
++        assertTrue(commands.none { it[5] == "-N" || it[5] == "-A" })
++        assertEquals(10, commands.size)
++        assertTrue(individual.size > commands.size + batches.size)
++        val end = commands.size
++        routes.close()
++        val cleanup = commands.drop(end)
++        assertTrue(cleanup.take(2).all { "-D" in it && "OUTPUT" in it && "mangle" in it })
++        assertEquals(4, cleanup.count { "-X" in it })
++    }
++
++    @Test
++    fun failedBatchFallsBackOnlyForThatAddressFamily() {
++        val commands = mutableListOf<List<String>>()
++        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add)
++        routes.start(restore = { command, _ ->
++            if (command.first().endsWith("/ip6tables-restore")) error("Restore unavailable")
++        })
++
++        assertTrue(commands.none { it.first().endsWith("/iptables") && "-A" in it })
++        assertTrue(commands.any { it.first().endsWith("/ip6tables") && "-A" in it })
++        assertEquals(2, commands.count { "-N" in it })
++        routes.close()
++        assertEquals(4, commands.count { "-X" in it })
++    }
++
++    @Test
 +    fun packetCountsReportOnlyTransparentProxyRules() {
 +        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { }
 +        val stats = routes.packetCounts { command ->
@@ -3034,7 +3202,7 @@ index 0000000..b6f8854
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..a424f87 100644
+index 751051e..92389e7 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -3042,7 +3210,7 @@ index 751051e..a424f87 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.12
-+VERSION_CODE=125
++VERSION_NAME=2.0.7-quality.13
++VERSION_CODE=126
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

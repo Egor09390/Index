@@ -1,3 +1,9 @@
+#### 2.0.7-quality.13
+
+* Start the TPROXY root process while the main core prepares the connection.
+* Install private firewall chains in batches on devices that support it, with the original rule-by-rule fallback.
+* Report connection startup timings in the log.
+
 #### 2.0.7-quality.12
 
 * Simplify the profiles toolbar, overflow menu, drawer and settings to match the marked screenshots.

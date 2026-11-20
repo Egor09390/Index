@@ -100,4 +100,5 @@ object Action {
     /** The auto-selector [EXTRA_PROFILE_ID] goes back to automatic in the running core. */
     const val AUTO_SELECTOR_AUTOMATIC = "io.nekohasekai.sagernet.AUTO_SELECTOR_AUTOMATIC"
     const val EXTRA_PROFILE_ID = "profileId"
+    const val EXTRA_START_REQUEST_TIME = "startRequestElapsedRealtime"
 }

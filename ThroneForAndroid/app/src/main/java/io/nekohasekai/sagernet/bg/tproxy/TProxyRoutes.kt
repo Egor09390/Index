@@ -36,12 +36,13 @@ internal class TProxyRoutes(
     fun start(
         rejectQuic: Boolean = false,
         androidVpnInterfaces: Set<String> = emptySet(),
+        restore: ((List<String>, String) -> Unit)? = null,
         onQuicRuleError: (Exception) -> Unit = {},
     ) {
         check(undo.isEmpty())
         vpnInterfaces = checkedVpnInterfaces(androidVpnInterfaces)
         try {
-            for (family in families) prepare(family)
+            for (family in families) prepare(family, restore)
             for (family in families) {
                 hook(family, "PREROUTING", "-i", "lo", "-m", "mark", "--mark", MARK, "-j", prerouting)
             }
@@ -61,9 +62,25 @@ internal class TProxyRoutes(
         }
     }
 
-    private fun prepare(family: Family) {
-        for (chain in listOf(output, prerouting)) {
-            run(family.firewall("-N", chain))
+    private fun prepare(family: Family, restore: ((List<String>, String) -> Unit)?) {
+        val chains = listOf(output, prerouting)
+        val rules = chainRules(family)
+        val commands = chains.map { listOf("-N", it) } + rules
+        // The restore parser reads text, unlike ProcessBuilder's argument list. Use it only for plain tokens
+        // and only one table/commit, so a rejected batch can safely fall back to individual commands.
+        val restored = if (restore != null && commands.all { command -> command.all(RESTORE_TOKEN::matches) }) {
+            val input = commands.joinToString("\n", prefix = "*mangle\n", postfix = "\nCOMMIT\n") { it.joinToString(" ") }
+            try {
+                restore(listOf("/system/bin/${family.firewall}-restore", "-w", "2", "--noflush"), input)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        } else {
+            false
+        }
+        for (chain in chains) {
+            if (!restored) run(family.firewall("-N", chain))
             undo.addLast(family.firewall("-X", chain))
             undo.addLast(family.firewall("-F", chain))
         }
@@ -72,7 +89,13 @@ internal class TProxyRoutes(
         val rule = arrayOf("pref", PRIORITY, "fwmark", MARK, "lookup", table)
         apply(family.ip("rule", "add", *rule), family.ip("rule", "del", *rule))
 
-        fun outputRule(vararg args: String) = run(family.firewall("-A", output, *args))
+        if (!restored) rules.forEach { run(family.firewall(*it.toTypedArray())) }
+    }
+
+    private fun chainRules(family: Family): List<List<String>> = buildList {
+        fun outputRule(vararg args: String) {
+            add(listOf("-A", output) + args)
+        }
         outputRule("-o", "lo", "-j", "RETURN")
         for (name in vpnInterfaces) {
             outputRule("-o", name, "-j", "RETURN")
@@ -89,7 +112,7 @@ internal class TProxyRoutes(
         if (family.selector == "-4") outputRule("-d", "255.255.255.255/32", "-j", "RETURN")
 
         // Replies from a transparent socket must not enter the listener again.
-        run(family.firewall("-A", prerouting, "-m", "conntrack", "--ctdir", "REPLY", "-j", "RETURN"))
+        add(listOf("-A", prerouting, "-m", "conntrack", "--ctdir", "REPLY", "-j", "RETURN"))
 
         // DNS to a LAN resolver still reaches Throne's DNS route before the LAN exclusions.
         for (protocol in listOf("tcp", "udp")) {
@@ -101,7 +124,7 @@ internal class TProxyRoutes(
         }
         for (protocol in listOf("tcp", "udp")) {
             outputRule("-p", protocol, "-j", "MARK", "--set-xmark", MARK)
-            run(family.firewall(
+            add(listOf(
                 "-A", prerouting, "-p", protocol, "-j", "TPROXY",
                 "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
             ))
@@ -192,5 +215,6 @@ internal class TProxyRoutes(
         const val ANDROID_VPN_PROTECTED = "0x00020000/0x00020000"
         const val PRIORITY = "9000"
         val INTERFACE_NAME = Regex("[A-Za-z0-9_.-]{1,15}")
+        val RESTORE_TOKEN = Regex("[A-Za-z0-9_.:/-]+")
     }
 }

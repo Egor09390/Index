@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.bg.tproxy
 
 import android.os.Process
+import android.os.SystemClock
 import android.system.OsConstants
 import io.throneproj.mobile.NetworkInterface as CoreNetworkInterface
 import java.net.NetworkInterface
@@ -40,6 +41,7 @@ internal object TProxyRootMain {
             check(Process.myUid() == 0) { ROOT_DENIED }
             val input = System.`in`.bufferedReader()
             val options = input.readLine()?.let(JsonInput::parseObject) ?: return
+            val setupStartedAt = SystemClock.elapsedRealtime()
             val uid = options.int("uid")
             val port = options.int("port")
             val target = options.obj("target")
@@ -92,9 +94,20 @@ internal object TProxyRootMain {
                 Runtime.getRuntime().addShutdownHook(cleanup)
                 try {
                     val vpnInterfaces = options.array(VPN_INTERFACES).strings().toSet()
-                    routes.start(options.bool("reject_quic"), vpnInterfaces) { error ->
+                    val rulesStartedAt = SystemClock.elapsedRealtime()
+                    var batches = 0
+                    routes.start(options.bool("reject_quic"), vpnInterfaces, restore = { command, input ->
+                        try {
+                            run(command, input)
+                            batches++
+                        } catch (error: Exception) {
+                            println("$LOG Firewall batch unavailable for ${command.first().substringAfterLast('/')}")
+                            throw error
+                        }
+                    }) { error ->
                         println("$LOG QUIC rejection unavailable: ${error.message?.lineSequence()?.firstOrNull().orEmpty()}")
                     }
+                    println("$LOG Startup relay=${rulesStartedAt - setupStartedAt}ms firewall=${SystemClock.elapsedRealtime() - rulesStartedAt}ms batches=$batches/2")
                     println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
                     println("$LOG Android VPN egress interfaces: ${vpnInterfaces.joinToString().ifEmpty { "none" }}")
                     println(READY)
@@ -109,7 +122,7 @@ internal object TProxyRootMain {
                         }
                     }
                 } finally {
-                    runCatching { routes.packetCounts(::run) }.onSuccess { println("$LOG $it") }
+                    runCatching { routes.packetCounts { command -> run(command) } }.onSuccess { println("$LOG $it") }
                     routes.close()
                     Runtime.getRuntime().removeShutdownHook(cleanup)
                 }
@@ -133,9 +146,11 @@ internal object TProxyRootMain {
         exitProcess(0)
     }
 
-    private fun run(command: List<String>): String {
+    private fun run(command: List<String>, input: String? = null): String {
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
-        process.outputStream.close()
+        process.outputStream.use { stream ->
+            if (input != null) stream.write(input.toByteArray(Charsets.UTF_8))
+        }
         val output = process.inputStream.bufferedReader().use { it.readText().trim() }
         if (process.waitFor() != 0) {
             val name = command.first().substringAfterLast('/')

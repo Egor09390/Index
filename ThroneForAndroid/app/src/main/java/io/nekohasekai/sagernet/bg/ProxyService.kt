@@ -43,8 +43,18 @@ class ProxyService : Service(), BaseService.Interface {
     private val vpnUpdateLock = Mutex()
 
     override suspend fun preInit() {
+        if (DataStore.serviceMode == Key.MODE_TPROXY) {
+            val proxy = checkNotNull(data.proxy)
+            val session = TProxySession(this) {
+                runOnMainDispatcher {
+                    if (data.proxy === proxy && data.state.canStop) failRunner(getString(R.string.tproxy_stopped))
+                }
+            }
+            tproxy = session
+            withContext(Dispatchers.IO) { session.prepareRootProcess() }
+            upstreamVpn = defaultVpn()
+        }
         super.preInit()
-        if (DataStore.serviceMode == Key.MODE_TPROXY) upstreamVpn = defaultVpn()
     }
 
     override suspend fun lateInit() {
@@ -120,17 +130,10 @@ class ProxyService : Service(), BaseService.Interface {
     }
 
     override suspend fun startProcesses() {
-        val rootMode = DataStore.serviceMode == Key.MODE_TPROXY
         super.startProcesses()
-        if (!rootMode) return
-        val proxy = checkNotNull(data.proxy)
-        val session = TProxySession(this, proxy.config.coreConfig) {
-            runOnMainDispatcher {
-                if (data.proxy === proxy && data.state.canStop) failRunner(getString(R.string.tproxy_stopped))
-            }
-        }
-        tproxy = session
-        runInterruptible { session.start(androidVpnInterfaces()) }
+        val session = tproxy ?: return
+        val coreConfig = checkNotNull(data.proxy).config.coreConfig
+        runInterruptible { session.start(coreConfig, androidVpnInterfaces()) }
     }
 
     override suspend fun killProcesses(): Throwable? {

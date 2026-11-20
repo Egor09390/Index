@@ -13,6 +13,7 @@ import android.net.Network
 import android.os.Build
 import android.os.PowerManager
 import android.os.StrictMode
+import android.os.SystemClock
 import android.os.UserManager
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
@@ -211,7 +212,9 @@ class SagerNet : Application(),
         }
 
         fun startService() = ContextCompat.startForegroundService(
-            application, Intent(application, SagerConnection.serviceClass)
+            application,
+            Intent(application, SagerConnection.serviceClass)
+                .putExtra(Action.EXTRA_START_REQUEST_TIME, SystemClock.elapsedRealtime()),
         )
 
         fun reloadService() =

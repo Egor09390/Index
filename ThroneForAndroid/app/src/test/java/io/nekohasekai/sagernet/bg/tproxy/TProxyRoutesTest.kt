@@ -125,6 +125,52 @@ class TProxyRoutesTest {
     }
 
     @Test
+    fun batchedChainsMatchIndividualRulesAndAreRemovedAfterOutputHooks() {
+        val ranges = listOf("10.0.0.0/8", "fc00::/7")
+        val uids = setOf(10620, 10689)
+        val individual = mutableListOf<List<String>>()
+        TProxyRoutes(10231, 30080, ranges, uids, individual::add)
+            .start(rejectQuic = true, androidVpnInterfaces = setOf("tun2"))
+
+        val commands = mutableListOf<List<String>>()
+        val batches = mutableMapOf<String, String>()
+        val routes = TProxyRoutes(10231, 30080, ranges, uids, commands::add)
+        routes.start(rejectQuic = true, androidVpnInterfaces = setOf("tun2"), restore = { command, input ->
+            assertEquals(listOf("-w", "2", "--noflush"), command.drop(1))
+            batches[command.first().removeSuffix("-restore")] = input
+        })
+
+        assertEquals(2, batches.size)
+        for ((firewall, input) in batches) {
+            val expected = individual.filter { it.first() == firewall && (it[5] == "-N" || it[5] == "-A") }
+            assertEquals(expected.map { it.drop(5).joinToString(" ") }, input.trimEnd().lines().also { assertEquals("*mangle", it.first()); assertEquals("COMMIT", it.last()) }.drop(1).dropLast(1))
+        }
+        assertTrue(commands.none { it[5] == "-N" || it[5] == "-A" })
+        assertEquals(10, commands.size)
+        assertTrue(individual.size > commands.size + batches.size)
+        val end = commands.size
+        routes.close()
+        val cleanup = commands.drop(end)
+        assertTrue(cleanup.take(2).all { "-D" in it && "OUTPUT" in it && "mangle" in it })
+        assertEquals(4, cleanup.count { "-X" in it })
+    }
+
+    @Test
+    fun failedBatchFallsBackOnlyForThatAddressFamily() {
+        val commands = mutableListOf<List<String>>()
+        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add)
+        routes.start(restore = { command, _ ->
+            if (command.first().endsWith("/ip6tables-restore")) error("Restore unavailable")
+        })
+
+        assertTrue(commands.none { it.first().endsWith("/iptables") && "-A" in it })
+        assertTrue(commands.any { it.first().endsWith("/ip6tables") && "-A" in it })
+        assertEquals(2, commands.count { "-N" in it })
+        routes.close()
+        assertEquals(4, commands.count { "-X" in it })
+    }
+
+    @Test
     fun packetCountsReportOnlyTransparentProxyRules() {
         val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { }
         val stats = routes.packetCounts { command ->
