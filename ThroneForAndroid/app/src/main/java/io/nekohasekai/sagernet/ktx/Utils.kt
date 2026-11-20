@@ -12,7 +12,6 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.annotation.AttrRes
-import androidx.annotation.ColorRes
 import androidx.core.content.ContextCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
@@ -202,10 +201,6 @@ private class RestartCallback(val callback: () -> Unit) : SagerConnection.Callba
     override fun onServiceConnected(service: ISagerNetService) {
         callback()
     }
-}
-
-fun Context.getColour(@ColorRes colorRes: Int): Int {
-    return ContextCompat.getColor(this, colorRes)
 }
 
 fun Context.getColorAttr(@AttrRes resId: Int): Int {

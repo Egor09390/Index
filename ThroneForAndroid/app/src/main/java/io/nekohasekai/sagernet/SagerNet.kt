@@ -18,7 +18,6 @@ import android.os.UserManager
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
-import io.nekohasekai.sagernet.appwidget.Widgets
 import io.nekohasekai.sagernet.bg.CoreRuntime
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.autoselector.AutoSelectorRuntime
@@ -58,10 +57,8 @@ class SagerNet : Application(),
         if (isMainProcess || isBgProcess) {
             SettingsMapper.installOutboundHooks()
             if (isBgProcess) {
-                // The tile, shortcuts, widgets and the boot receiver start the foreground service from here.
+                // The tile, shortcuts and the boot receiver start the foreground service from here.
                 updateNotificationChannels()
-                // A new :bg process means no service runs: heal widgets left "Connected" by a killed one.
-                Widgets.push(this)
                 // The core (and its JNI library) is loaded in the :bg process only.
                 CoreRuntime.setup(this)
                 AutoSelectorRuntime.install()
@@ -90,7 +87,6 @@ class SagerNet : Application(),
             }
             RemoteRouteUpdater.schedule()
             SubscriptionScheduler.schedule()
-            Widgets.watchSelection(this)
         }
 
         if (BuildConfig.DEBUG) {

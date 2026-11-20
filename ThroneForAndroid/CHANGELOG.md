@@ -1,3 +1,8 @@
+#### 2.0.7-quality.15
+
+* Remove the home-screen status and toggle widgets and their background updates.
+* Remove unused helpers and translations for features removed in earlier builds.
+
 #### 2.0.7-quality.14
 
 * Remove the bundled sing-box dashboard, its WebView startup code and the real-time graphs and sampling pipeline.

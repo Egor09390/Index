@@ -9,7 +9,6 @@
     <string name="version_x">Version (%s)</string>
     <string name="menu_configuration">Profiles</string>
     <string name="menu_group">Groups</string>
-    <string name="menu_about">About</string>
     <string name="theme">Theme</string>
     <string name="use_system_theme">Use system theme</string>
     <string name="use_system_theme_summary">Use system Monet colors (Android 12+)</string>
@@ -19,7 +18,6 @@
     <string name="quick_toggle">Toggle</string>
     <string name="quick_enable">Enable</string>
     <string name="quick_disable">Disable</string>
-    <string name="menu_dashboard">sing-box dashboard</string>
     <string name="action_copy">Copy</string>
     <!-- toolbar navigation button -->
     <string name="navigation_open_drawer">Open navigation drawer</string>
@@ -357,7 +355,6 @@
     <string name="preview_hint_dont_show_again">Don\'t show again</string>
     <string name="update_dialog_title">New version available</string>
     <string name="reset_settings">Restore default settings</string>
-    <string name="reset_settings_message">Profiles, groups and routing profiles are kept. To remove everything, clear the app\'s data in the system settings.</string>
     <string name="xhttp_host">XHTTP host</string>
     <string name="xhttp_path">XHTTP path</string>
     <string name="xhttp_mode">XHTTP mode</string>
@@ -772,25 +769,8 @@
     <string name="listen_port">Listen port</string>
     <string name="listen_address">Listen address</string>
     <string name="clash_api_secret">Secret</string>
-    <string name="cag_api_dashboard">sing-box API / Dashboard</string>
     <string name="cag_box_api" translatable="false">sing-box API</string>
     <string name="api_dashboard_enable">Enable sing-box API</string>
-    <string name="api_dashboard_enable_sum">Loopback only. Serves the sing-box dashboard in the side menu, with live traffic, connections and logs.</string>
-    <string name="api_dashboard_secret_hint">Leave empty to generate a new random secret. The dashboard in the app picks it up by itself.</string>
-    <string name="dashboard_reload">Reload</string>
-    <string name="dashboard_retry">Retry</string>
-    <string name="dashboard_loading">Loading the dashboard…</string>
-    <string name="dashboard_off_title">The sing-box API is off</string>
-    <string name="dashboard_off">The dashboard is served by the core\'s sing-box API. Turn it on in Settings › Core.</string>
-    <string name="dashboard_core_settings">Core settings</string>
-    <string name="dashboard_stopped_title">The service is not running</string>
-    <string name="dashboard_stopped">Start a profile first; the dashboard is served by the running core.</string>
-    <string name="dashboard_missing_title">The dashboard is missing</string>
-    <string name="dashboard_missing">This build does not include the sing-box dashboard files, or they could not be unpacked; the log says why. Reloading the service tries again.</string>
-    <string name="dashboard_error_title">Could not load the dashboard</string>
-    <string name="dashboard_unreachable">Nothing answers on 127.0.0.1:%1$d (%2$s). Reload the service after changing the sing-box API settings. A profile with a custom full config serves the dashboard only when its own config has an api service on that port.</string>
-    <string name="dashboard_http_error">The core answered with HTTP %1$d.</string>
-    <string name="dashboard_no_webview">The dashboard needs Android System WebView, which is missing or disabled on this device.</string>
     <string name="xray_vless_preference">Xray VLESS preference</string>
     <string name="xray_vless_xhttp_only">XHTTP only</string>
     <string name="xray_vless_xhttp_and_reality">XHTTP and Reality</string>
@@ -1285,7 +1265,6 @@
     <string name="confirm_remove_group">Remove group?</string>
     <string name="confirm_remove_route_profile">Remove routing profile?</string>
     <string name="confirm_replace_rules">Replace the rules?</string>
-    <string name="confirm_reset_settings">Restore default settings?</string>
     <string name="confirm_auto_select_apps">Auto select proxy apps?</string>
 
     <!-- group actions (desktop MainWindow texts) -->
@@ -1910,7 +1889,7 @@
     <string name="log_export_failed">Log export failed: %s</string>
     <string name="log_crash_title">Throne crashed</string>
 
-    <!-- platform: Wi-Fi rules, notification, battery, widgets, package pickers -->
+    <!-- platform: Wi-Fi rules, notification, battery, package pickers -->
     <string name="not_now">Not now</string>
     <string name="channel_warnings">Warnings</string>
 
@@ -1940,7 +1919,7 @@
 
     <!-- Battery -->
     <string name="battery_prompt_title">Keep Throne running</string>
-    <string name="battery_prompt_message">Android may stop or delay apps in the background to save battery. Let Throne run without battery optimization so the VPN stays connected with the screen off and switching servers from the notification, tile or widget keeps working.</string>
+    <string name="battery_prompt_message">Android may stop or delay apps in the background to save battery. Let Throne run without battery optimization so the VPN stays connected with the screen off and switching servers from the notification or tile keeps working.</string>
     <string name="battery_prompt_allow">Allow</string>
     <string name="battery_prompt_later">You can allow this later in Settings › General › Battery optimization</string>
     <string name="battery_optimization">Battery optimization</string>
@@ -1967,18 +1946,6 @@
     <string name="vpn_dialog_missing_message">This device has no screen to confirm VPN access, so Throne cannot ask for it. Grant it once over adb:\n\nadb shell appops set %1$s ACTIVATE_VPN allow\n\nor switch the service mode to \"Proxy only\".</string>
     <string name="vpn_dialog_use_proxy">Use proxy mode</string>
     <string name="vpn_dialog_copy_command">Copy command</string>
-
-    <!-- Widgets -->
-    <string name="widget_toggle_name">Toggle</string>
-    <string name="widget_toggle_description">Start or stop the VPN with one tap</string>
-    <string name="widget_status_name">Status</string>
-    <string name="widget_status_description">Current server and speed, with buttons for the previous and next server</string>
-    <string name="widget_connected">Connected</string>
-    <string name="widget_stopped">Stopped</string>
-    <string name="widget_no_profile">No profile</string>
-    <string name="widget_previous">Previous server</string>
-    <string name="widget_next">Next server</string>
-    <string name="widget_toggle">Start or stop</string>
 
     <!-- Package pickers -->
     <string name="picker_add_package">Add package name…</string>
@@ -2103,10 +2070,6 @@
         <item quantity="other">Jump to latest (%d new)</item>
     </plurals>
     <string name="log_font_size">Font size</string>
-    <string name="dashboard_old_webview_title">Android System WebView is out of date</string>
-    <string name="dashboard_old_webview">The dashboard needs WebView %1$d or newer, and this device has %2$d, so the page may look broken or stay blank. Update Android System WebView (or Chrome, where it provides the WebView) from the app store.</string>
-    <string name="dashboard_update_webview">Update WebView</string>
-    <string name="dashboard_open_anyway">Open anyway</string>
     <!-- B1 diagnostics/awg -->
     <string name="amnezia_quic_signature">Generate QUIC signature…</string>
     <string name="amnezia_quic_signature_sum">Fills the signature packets with the first QUIC packets Chrome would send to the given domain, so the handshake starts like an HTTP/3 connection to it. Generated locally; nothing is sent. Replaces I1–I5.</string>
@@ -2134,32 +2097,6 @@
     <string name="diagnostics_save_failed">Could not save %1$s: %2$s</string>
     <string name="diagnostics_exported">Performance profile saved</string>
     <string name="diagnostics_notification">Recording a performance profile…</string>
-    <!-- B2 live graphs -->
-    <string name="live_graphs">Live graphs</string>
-    <string name="live_graph_traffic">Traffic</string>
-    <string name="live_graph_proxy">Proxy</string>
-    <string name="live_graph_direct">Direct</string>
-    <string name="live_graph_down">Down</string>
-    <string name="live_graph_up">Up</string>
-    <string name="live_graph_total">Total</string>
-    <string name="live_graph_stopped">Stopped</string>
-    <string name="live_graph_started">Started %1$s</string>
-    <string name="live_graph_switched">Switched to %1$s</string>
-    <string name="live_graph_peak">peak of %1$d s</string>
-    <string name="live_graph_waiting">Waiting for traffic</string>
-    <string name="live_graph_waiting_body">The graph fills in once a second while a profile is running.</string>
-    <string name="live_graph_all_hidden">All lines are hidden</string>
-    <string name="live_graph_all_hidden_body">Tap a line or a direction above the graph to show it.</string>
-    <string name="live_graph_legend_hint">Tap a line or direction to hide or show it, long-press a line to show only it. Touch the graph for the values at a moment.</string>
-    <string name="live_graph_smooth">Smooth lines</string>
-    <string name="live_graph_events">Profile events</string>
-    <string name="live_graph_show_all">Show all lines</string>
-    <string name="live_graph_clear">Clear history</string>
-    <string name="live_graph_core_title">Core process</string>
-    <string name="live_graph_core">Core</string>
-    <string name="live_graph_cpu">CPU</string>
-    <string name="live_graph_ram">RAM</string>
-    <string name="live_graph_connections">Connections</string>
     <!-- V1 validation -->
     <string name="validation_ipv4">Not a valid IPv4 address (four numbers from 0 to 255 separated by dots).</string>
     <string name="validation_ipv6">Not a valid IPv6 address.</string>

@@ -461,36 +461,6 @@
             android:name="io.nekohasekai.sagernet.update.UpdateReceiver"
             android:exported="false" />
 
-        <!-- Widgets live in :bg, the only process that knows the service state. -->
-        <receiver
-            android:name="io.nekohasekai.sagernet.appwidget.ToggleWidgetProvider"
-            android:exported="false"
-            android:label="@string/widget_toggle_name"
-            android:process=":bg">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/appwidget_toggle" />
-        </receiver>
-        <receiver
-            android:name="io.nekohasekai.sagernet.appwidget.StatusWidgetProvider"
-            android:exported="false"
-            android:label="@string/widget_status_name"
-            android:process=":bg">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/appwidget_status" />
-        </receiver>
-        <receiver
-            android:name="io.nekohasekai.sagernet.appwidget.WidgetActionReceiver"
-            android:exported="false"
-            android:process=":bg" />
-
         <service
             android:name="androidx.room.MultiInstanceInvalidationService"
             android:process=":bg" />

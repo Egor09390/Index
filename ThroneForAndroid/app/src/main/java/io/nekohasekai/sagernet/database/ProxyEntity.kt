@@ -293,9 +293,6 @@ data class ProxyEntity(
     @androidx.room.Dao
     interface Dao {
 
-        @Query("SELECT * FROM `profiles`")
-        fun getAll(): List<ProxyEntity>
-
         @Query("SELECT `id` FROM `profiles` WHERE `gid` = :groupId ORDER BY `user_order`, `id`")
         fun getIdsByGroup(groupId: Long): List<Long>
 

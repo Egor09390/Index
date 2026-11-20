@@ -84,8 +84,6 @@ class ImportReport {
     fun hasProblems(): Boolean = failedCount > 0 || warnedCount > 0 || fatal.isNotEmpty() || groups.isNotEmpty()
 
     /** A refused item, a fatal reason or an Error issue. */
-    fun hasErrors(): Boolean = failedCount > 0 || fatal.isNotEmpty() || groups.any { it.severity == Severity.Error }
-
     /** "Imported 12 profiles. 3 could not be imported. 5 imported with warnings." then one fatal reason per line. */
     fun summary(): String {
         val text = StringBuilder(vplural(R.plurals.validation_import_imported, importedCount))

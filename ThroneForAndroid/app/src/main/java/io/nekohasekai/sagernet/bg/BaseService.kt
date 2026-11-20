@@ -13,7 +13,6 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
-import io.nekohasekai.sagernet.appwidget.Widgets
 import io.nekohasekai.sagernet.bg.autoselector.AutoSelectorRuntime
 import io.nekohasekai.sagernet.bg.proto.DeferredRuleSets
 import io.nekohasekai.sagernet.bg.proto.LocalDnsFailedException
@@ -139,7 +138,6 @@ class BaseService {
             state = s
             DataStore.serviceState = s
             binder.stateChanged(s, msg)
-            Widgets.push(service as Context)
         }
 
         /** Reads the idle mode when the job runs, so the last of several quick events always wins. */
@@ -309,7 +307,7 @@ class BaseService {
                 data.binder.broadcast { it.cbSelectorUpdate(id) }
             }
             // While stopping, a restart in flight starts whatever is selected once the old core is gone.
-            if (s.canStop) AutoSelectorRuntime.restart(this) { stopRunner(true) } else Widgets.push(this as Context)
+            if (s.canStop) AutoSelectorRuntime.restart(this) { stopRunner(true) }
         }
 
         /** The neighbour [step] away in the group of the selected profile, wrapping around. */

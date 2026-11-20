@@ -7,7 +7,6 @@ import io.nekohasekai.sagernet.route.RuleEnv
 import io.nekohasekai.sagernet.route.RuleIssue
 import io.nekohasekai.sagernet.route.RuleSetCatalog
 import io.nekohasekai.sagernet.validation.Severity
-import io.nekohasekai.sagernet.validation.Validation
 import io.nekohasekai.sagernet.validation.vtr
 
 /**
@@ -16,18 +15,8 @@ import io.nekohasekai.sagernet.validation.vtr
  */
 internal object RouteRuleChecks {
 
-    /** An IPv4/IPv6 address or CIDR (sing-box takes both in ip_cidr / source_ip_cidr). */
-    fun isAddressOrCidr(text: String): Boolean = text.isNotBlank() && RouteRule.checkValue("ip_cidr", text) == null
-
     /** One port, 0 included (the core's Listable[uint16]). */
     fun isPort(text: String): Boolean = text.isNotBlank() && RouteRule.checkValue("port", text) == null
-
-    /** `start:end`, `:end` or `start:` (route/rule/rule_item_port_range.go); a reversed range only warns. */
-    fun isPortRange(text: String): Boolean = text.isNotBlank() && RouteRule.checkValue("port_range", text)?.severity != Severity.Error
-
-    /** Why [pattern] would fail as a Go regular expression, or null. */
-    @Suppress("UNUSED_PARAMETER")
-    fun regexError(context: Context, pattern: String): String? = Validation.goRegex(pattern).ifEmpty { null }
 
     /** The rule-set entries [catalog] does not know and that are no usable .srs URL. An empty catalog judges only URLs. */
     fun unknownRuleSets(entries: List<String>, catalog: RuleSetCatalog): List<String> = entries.map { it.trim() }

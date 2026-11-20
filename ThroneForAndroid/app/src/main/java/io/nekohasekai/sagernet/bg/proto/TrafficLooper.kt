@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.bg.proto
 import io.nekohasekai.sagernet.aidl.SpeedDisplayData
 import io.nekohasekai.sagernet.aidl.TrafficData
 import io.nekohasekai.sagernet.aidl.TrafficDataBatch
-import io.nekohasekai.sagernet.appwidget.Widgets
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
@@ -12,7 +11,6 @@ import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SortInput
 import io.nekohasekai.sagernet.ktx.Logs
-import io.nekohasekai.sagernet.ktx.app
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -259,7 +257,6 @@ class TrafficLooper(val data: BaseService.Data, private val sc: CoroutineScope) 
             data.notification?.apply {
                 if (listenPostSpeed) postNotificationSpeedUpdate(snapshot.speed)
             }
-            Widgets.pushSpeed(app, snapshot.speed.txRateProxy, snapshot.speed.rxRateProxy)
 
             delay(delayMs)
         }

@@ -32,7 +32,7 @@ The UI process SHALL communicate with the running service over an AIDL connectio
 - **THEN** it binds, receives the current state, and reflects it without restarting the service
 
 ### Requirement: External control actions
-The app SHALL support broadcast/Intent actions to stop the service, reload the running configuration, switch to the next or previous profile, and switch to a profile by id, invokable from the notification, widgets, and quick settings tile.
+The app SHALL support broadcast/Intent actions to stop the service, reload the running configuration, switch to the next or previous profile, and switch to a profile by id, invokable from the notification and quick settings tile.
 
 #### Scenario: Quick settings tile toggle
 - **WHEN** the user taps the quick settings tile with no active connection
