@@ -15,7 +15,6 @@ import androidx.annotation.StringRes
 import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
 import androidx.coordinatorlayout.widget.CoordinatorLayout
-import androidx.core.content.ContextCompat
 import androidx.core.os.bundleOf
 import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
@@ -58,7 +57,6 @@ import io.nekohasekai.sagernet.ui.profiles.SubscriptionInfoCard
 import io.nekohasekai.sagernet.ui.test.TestPanelController
 import io.nekohasekai.sagernet.ui.test.TestSessionClient
 import io.nekohasekai.sagernet.ui.test.TestUiState
-import io.nekohasekai.sagernet.utils.Theme
 import io.nekohasekai.sagernet.widget.applyInsetMargin
 import io.nekohasekai.sagernet.widget.applyInsetPadding
 import kotlinx.coroutines.CoroutineScope
@@ -413,14 +411,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
         }
     }
 
-    /** The navigation icon in the toolbar's colours (the white theme draws it dark, as ToolbarFragment does). */
     private fun setNavigationIcon(@DrawableRes icon: Int, @StringRes description: Int) {
         val toolbar = toolbar ?: return
         toolbar.setNavigationIcon(icon)
         toolbar.setNavigationContentDescription(description)
-        if (Theme.isWhiteTheme()) {
-            toolbar.navigationIcon?.setTint(ContextCompat.getColor(requireContext(), R.color.black))
-        }
     }
 
     override fun onMenuItemClick(item: MenuItem): Boolean {

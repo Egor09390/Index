@@ -61,8 +61,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var wifiPermissionAsked by configurationStore.boolean(Key.WIFI_PERMISSION_ASKED)
     /** Why the last start failed, until the next start or until the user dismisses it. */
     var serviceError by configurationStore.string(Key.SERVICE_ERROR)
-    /** [serviceError] asks for a working Direct DNS, so it offers the DNS settings instead of the logs. */
-    var serviceErrorDns by configurationStore.boolean(Key.SERVICE_ERROR_DNS)
     /** [serviceError] is about Xray's geoip.dat / geosite.dat, so it offers the geo asset settings instead. */
     var serviceErrorGeo by configurationStore.boolean(Key.SERVICE_ERROR_GEO)
     /** [serviceError] is about remote rule-sets that could not be downloaded, so it offers to start without them. */
@@ -74,11 +72,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { true }
     var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS) { true }
 
-    var appTheme by configurationStore.int(Key.APP_THEME)
-    var useSystemTheme by configurationStore.boolean(Key.USE_SYSTEM_THEME)
-    var nightTheme by configurationStore.stringToInt(Key.NIGHT_THEME)
-    var amoledTheme by configurationStore.boolean(Key.AMOLED_THEME)
-    var appLanguage by configurationStore.string(Key.APP_LANGUAGE) { "" }
     var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
 
     var showGroupInNotification by configurationStore.boolean(Key.SHOW_GROUP_IN_NOTIFICATION)

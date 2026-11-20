@@ -534,13 +534,12 @@ class BaseService {
 
         /**
          * A start that failed: MainActivity keeps showing [message] until the next start, also on a later visit, and
-         * offers the DNS settings with it when [dnsSettings], the Xray geo asset settings when [geoSettings], a start
+         * offers the Xray geo asset settings when [geoSettings], or a start
          * without the rule-sets when [ruleSets].
          */
-        fun failRunner(message: String, dnsSettings: Boolean = false, geoSettings: Boolean = false, ruleSets: Boolean = false) {
+        fun failRunner(message: String, geoSettings: Boolean = false, ruleSets: Boolean = false) {
             if (data.state != State.Stopping) {
                 DataStore.serviceError = message
-                DataStore.serviceErrorDns = dnsSettings
                 DataStore.serviceErrorGeo = geoSettings
                 DataStore.serviceErrorRuleSets = ruleSets
             }
@@ -661,7 +660,6 @@ class BaseService {
 
             if (DataStore.serviceError.isNotEmpty()) {
                 DataStore.serviceError = ""
-                DataStore.serviceErrorDns = false
                 DataStore.serviceErrorGeo = false
                 DataStore.serviceErrorRuleSets = false
             }
@@ -704,7 +702,6 @@ class BaseService {
                     failRunner(
                         if (exc.servers.isEmpty()) getString(R.string.local_dns_failed_system)
                         else getString(R.string.local_dns_failed, exc.servers),
-                        dnsSettings = true,
                     )
                 } catch (exc: RuleSetDownloadFailedException) {
                     failRunner(

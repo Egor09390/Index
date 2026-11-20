@@ -1,3 +1,8 @@
+#### 2.0.7-quality.16
+
+* Remove Appearance, Inbound, DNS and Presets from Settings, including their editors.
+* Follow the system light and dark mode with the built-in theme and keep existing VPN profiles and connection settings.
+
 #### 2.0.7-quality.15
 
 * Remove the home-screen status and toggle widgets and their background updates.

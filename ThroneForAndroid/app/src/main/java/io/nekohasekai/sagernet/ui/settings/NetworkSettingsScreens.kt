@@ -1,8 +1,6 @@
 package io.nekohasekai.sagernet.ui.settings
 
 import android.content.Intent
-import android.os.Build
-import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.SwitchPreference
@@ -17,7 +15,6 @@ import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.group.RemoteRouteUpdater
 import io.nekohasekai.sagernet.ktx.needReload
 import io.nekohasekai.sagernet.ui.AppManagerActivity
-import io.nekohasekai.sagernet.ui.GroupSettingsActivity
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.route.RouteQuickSwitch
 import io.nekohasekai.sagernet.validation.Empty
@@ -28,119 +25,9 @@ import io.nekohasekai.sagernet.validation.vtr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import moe.matsuri.nb4a.ui.EditConfigPreference
 import moe.matsuri.nb4a.ui.MTUPreference
 import moe.matsuri.nb4a.ui.SimpleMenuPreference
 import kotlin.math.abs
-
-/**
- * The mixed inbound (Basic Settings › Inbound Settings) and the DNS server port (Basic Settings › Core), plus the
- * Android system HTTP proxy switch and its bypass list.
- */
-class InboundSettingsFragment : SettingsScreenFragment(R.xml.settings_inbound) {
-
-    override fun beforeInflate() {
-        DataStore.initGlobal()
-    }
-
-    override fun bind() {
-        val port = pref<EditTextPreference>(SettingsRegistry.INBOUND_SOCKS_PORT.key)
-        val randomPort = pref<SwitchPreference>(SettingsRegistry.RANDOM_INBOUND_PORT.key)
-        val allowLan = pref<SwitchPreference>(KEY_ALLOW_LAN)
-        val auth = pref<SwitchPreference>(SettingsRegistry.INBOUND_AUTH.key)
-        val user = pref<EditTextPreference>(SettingsRegistry.INBOUND_USER.key)
-        val pass = pref<EditTextPreference>(SettingsRegistry.INBOUND_PASS.key)
-        val appendHttpProxy = pref<SwitchPreference>(Key.APPEND_HTTP_PROXY)
-        val httpProxyBypass = pref<EditTextPreference>(Key.HTTP_PROXY_BYPASS)
-        val dnsInPort = pref<EditTextPreference>(SettingsRegistry.CORE_DNS_IN_PORT.key)
-
-        // The four local listeners need distinct ports; the Clash and sing-box API ports are on the Core screen.
-        gateText(port.key, SettingChecks.listenPort(SettingChecks.Listener.MIXED), invalid = R.string.invalid_port, valid = SettingValidators::isPort)
-        port.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-        // dialog_basic_settings.cpp:255-256.
-        gateText(dnsInPort.key, SettingChecks.listenPort(SettingChecks.Listener.DNS), invalid = R.string.invalid_port, valid = SettingValidators::isPort)
-        dnsInPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-        // The address itself has no field: the LAN switch writes it, so a restored one that is not an IP marks the switch.
-        validation.bind(KEY_ALLOW_LAN) {
-            val address = DataStore.inboundAddress
-            Validation.ip(address).ifEmpty { null }?.let { vtr(R.string.validation_form_issue, address, it) }.orEmpty()
-        }
-        pass.summaryProvider = GroupSettingsActivity.PasswordSummaryProvider
-        httpProxyBypass.setOnBindEditTextListener(EditTextPreferenceModifiers.Hosts)
-        httpProxyBypass.summaryProvider = LinesSummaryProvider(maxLines = 1)
-        pref<EditConfigPreference>(SettingsRegistry.CUSTOM_INBOUND.key).useConfigStore(SettingsRegistry.CUSTOM_INBOUND.key)
-
-        allowLan.isChecked = DataStore.allowLanAccess
-        allowLan.setOnPreferenceChangeListener { _, newValue ->
-            DataStore.inboundAddress = if (newValue as Boolean) SettingsRegistry.LAN_ADDRESS else SettingsRegistry.LOOPBACK_ADDRESS
-            needReload()
-            true
-        }
-
-        var mixedDisabled = DataStore.disableMixedInbound
-        fun updateHttpProxyState(authOn: Boolean = auth.isChecked, append: Boolean = appendHttpProxy.isChecked) {
-            appendHttpProxy.isEnabled = !mixedDisabled && !authOn
-            appendHttpProxy.summary = getString(
-                when {
-                    mixedDisabled -> R.string.append_http_proxy_mixed_disabled
-                    authOn -> R.string.append_http_proxy_auth_on
-                    else -> R.string.append_http_proxy_sum
-                }
-            )
-            httpProxyBypass.isEnabled = appendHttpProxy.isEnabled && append
-        }
-
-        fun updateMixedState(disabled: Boolean) {
-            mixedDisabled = disabled
-            for (p in listOf(port, randomPort, allowLan, auth, user, pass)) p.isEnabled = !disabled
-            if (disabled) {
-                port.summaryProvider = null
-                port.summary = getString(R.string.mixed_inbound_disabled)
-            } else {
-                port.summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
-            }
-            user.isEnabled = !disabled && auth.isChecked
-            pass.isEnabled = !disabled && auth.isChecked
-            updateHttpProxyState()
-        }
-        updateMixedState(mixedDisabled)
-        pref<SwitchPreference>(SettingsRegistry.DISABLE_MIXED_INBOUND.key).setOnPreferenceChangeListener { _, newValue ->
-            val disabled = newValue as Boolean
-            if (disabled && DataStore.serviceMode == Key.MODE_PROXY) {
-                Toast.makeText(
-                    requireContext(),
-                    getString(R.string.disable_mixed_inbound_proxy_toast, DataStore.inboundSocksPort),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-            updateMixedState(disabled)
-            needReload()
-            true
-        }
-        auth.setOnPreferenceChangeListener { _, newValue ->
-            user.isEnabled = newValue as Boolean
-            pass.isEnabled = newValue
-            updateHttpProxyState(authOn = newValue)
-            needReload()
-            true
-        }
-        appendHttpProxy.setOnPreferenceChangeListener { _, newValue ->
-            updateHttpProxyState(append = newValue as Boolean)
-            needReload()
-            true
-        }
-        // VpnService.Builder.setHttpProxy needs Android 10.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            appendHttpProxy.isVisible = false
-            httpProxyBypass.isVisible = false
-        }
-        reloadOn(randomPort.key, user.key, pass.key, httpProxyBypass.key)
-    }
-
-    private companion object {
-        const val KEY_ALLOW_LAN = "inboundAllowLan"
-    }
-}
 
 /** Tun Settings: stack, MTU, IPv6, tun routing, private range bypass, per-app proxy and the tun addresses. */
 class TunSettingsFragment : SettingsScreenFragment(R.xml.settings_tun) {

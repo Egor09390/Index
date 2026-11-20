@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.ui
 import android.os.Bundle
 import android.view.View
 import androidx.activity.OnBackPressedCallback
-import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.Fragment
@@ -11,7 +10,6 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.ui.settings.SettingsScreenFragment
-import io.nekohasekai.sagernet.utils.Theme
 import io.nekohasekai.sagernet.widget.applyListInsets
 
 /** Hosts the settings root and its sub-screens; back and the toolbar arrow return to the previous screen. */
@@ -44,7 +42,7 @@ class SettingsFragment : ToolbarFragment(R.layout.layout_config_settings),
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
         childFragmentManager.addOnBackStackChangedListener(backStackListener)
 
-        // A recreated activity (theme switch) restores the open sub-screen and its back stack.
+        // A recreated activity restores the open sub-screen and its back stack.
         if (childFragmentManager.findFragmentById(R.id.settings) == null) {
             childFragmentManager.beginTransaction()
                 .replace(R.id.settings, SettingsPreferenceFragment())
@@ -109,10 +107,6 @@ class SettingsFragment : ToolbarFragment(R.layout.layout_config_settings),
             toolbar.setNavigationOnClickListener {
                 (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START)
             }
-        }
-        // White theme: the toolbar is white, so the navigation icon turns dark
-        if (Theme.isWhiteTheme()) {
-            toolbar.navigationIcon?.setTint(ContextCompat.getColor(requireContext(), R.color.black))
         }
     }
 

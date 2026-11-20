@@ -112,10 +112,15 @@ index 28bcdd4..c161e6b 100644
  # python bytecode
  __pycache__/
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..15ad45b 100644
+index 6460f87..2b412fc 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,73 @@
+@@ -1,3 +1,78 @@
++#### 2.0.7-quality.16
++
++* Remove Appearance, Inbound, DNS and Presets from Settings, including their editors.
++* Follow the system light and dark mode with the built-in theme and keep existing VPN profiles and connection settings.
++
 +#### 2.0.7-quality.15
 +
 +* Remove the home-screen status and toggle widgets and their background updates.
@@ -308,10 +313,18 @@ index f7f2796..0000000
 -
 -parcelable LiveStatsBatch;
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/Constants.kt b/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
-index 7a2bf3b..d464a46 100644
+index 7a2bf3b..0c9f172 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/Constants.kt
-@@ -14,6 +14,7 @@ object Key {
+@@ -6,14 +6,10 @@ object Key {
+ 
+     // Android-only keys of the configuration store; the desktop keys are in database.SettingsRegistry.
+ 
+-    const val APP_THEME = "appTheme"
+-    const val USE_SYSTEM_THEME = "useSystemTheme"
+-    const val NIGHT_THEME = "nightTheme"
+-    const val AMOLED_THEME = "amoledTheme"
+-    const val APP_LANGUAGE = "appLanguage"
      const val SERVICE_MODE = "serviceMode"
      const val MODE_VPN = "vpn"
      const val MODE_PROXY = "proxy"
@@ -319,14 +332,22 @@ index 7a2bf3b..d464a46 100644
  
      const val PROXY_APPS = "proxyApps"
      const val BYPASS_MODE = "bypassMode"
-@@ -99,4 +100,5 @@ object Action {
+@@ -66,7 +62,6 @@ object Key {
+     const val HWID_FALLBACK = "hwidFallback"
+     const val WIFI_PERMISSION_ASKED = "wifiPermissionAsked"
+     const val SERVICE_ERROR = "serviceError"
+-    const val SERVICE_ERROR_DNS = "serviceErrorDns"
+     const val SERVICE_ERROR_GEO = "serviceErrorGeo"
+     const val SERVICE_ERROR_RULE_SETS = "serviceErrorRuleSets"
+     const val START_WITHOUT_RULE_SETS = "startWithoutRuleSets"
+@@ -99,4 +94,5 @@ object Action {
      /** The auto-selector [EXTRA_PROFILE_ID] goes back to automatic in the running core. */
      const val AUTO_SELECTOR_AUTOMATIC = "io.nekohasekai.sagernet.AUTO_SELECTOR_AUTOMATIC"
      const val EXTRA_PROFILE_ID = "profileId"
 +    const val EXTRA_START_REQUEST_TIME = "startRequestElapsedRealtime"
  }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt b/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt
-index 0dd7bb6..f0f7250 100644
+index 0dd7bb6..42105bc 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/SagerNet.kt
 @@ -13,11 +13,11 @@ import android.net.Network
@@ -364,7 +385,7 @@ index 0dd7bb6..f0f7250 100644
                  // The core (and its JNI library) is loaded in the :bg process only.
                  CoreRuntime.setup(this)
                  AutoSelectorRuntime.install()
-@@ -74,13 +70,7 @@ class SagerNet : Application(),
+@@ -74,19 +70,11 @@ class SagerNet : Application(),
                  }
              }
  
@@ -379,7 +400,13 @@ index 0dd7bb6..f0f7250 100644
          }
  
          if (isMainProcess) {
-@@ -95,11 +85,8 @@ class SagerNet : Application(),
+             Theme.apply(this)
+-            Theme.applyNightTheme()
+-            AppLocale.apply()
+             UpdateManager.onAppStart(this)
+             runOnDefaultDispatcher {
+                 DefaultNetworkListener.start(this) {
+@@ -95,11 +83,8 @@ class SagerNet : Application(),
  
                  updateNotificationChannels()
              }
@@ -391,7 +418,7 @@ index 0dd7bb6..f0f7250 100644
          }
  
          if (BuildConfig.DEBUG) {
-@@ -211,7 +198,9 @@ class SagerNet : Application(),
+@@ -211,7 +196,9 @@ class SagerNet : Application(),
          }
  
          fun startService() = ContextCompat.startForegroundService(
@@ -763,7 +790,7 @@ index bded49f..0000000
 -    )
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
-index 67d1624..62afe49 100644
+index 67d1624..0bc95d6 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/BaseService.kt
 @@ -13,8 +13,6 @@ import io.nekohasekai.sagernet.R
@@ -813,7 +840,23 @@ index 67d1624..62afe49 100644
          fun startRunner() {
              this as Context
              if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, javaClass))
-@@ -602,12 +602,14 @@ class BaseService {
+@@ -534,13 +534,12 @@ class BaseService {
+ 
+         /**
+          * A start that failed: MainActivity keeps showing [message] until the next start, also on a later visit, and
+-         * offers the DNS settings with it when [dnsSettings], the Xray geo asset settings when [geoSettings], a start
++         * offers the Xray geo asset settings when [geoSettings], or a start
+          * without the rule-sets when [ruleSets].
+          */
+-        fun failRunner(message: String, dnsSettings: Boolean = false, geoSettings: Boolean = false, ruleSets: Boolean = false) {
++        fun failRunner(message: String, geoSettings: Boolean = false, ruleSets: Boolean = false) {
+             if (data.state != State.Stopping) {
+                 DataStore.serviceError = message
+-                DataStore.serviceErrorDns = dnsSettings
+                 DataStore.serviceErrorGeo = geoSettings
+                 DataStore.serviceErrorRuleSets = ruleSets
+             }
+@@ -602,12 +601,14 @@ class BaseService {
              DataStore.baseService = this
  
              if (data.state != State.Stopped) return Service.START_NOT_STICKY
@@ -830,7 +873,15 @@ index 67d1624..62afe49 100644
              DataStore.baseService = this
              val data = data
              val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
-@@ -675,13 +677,23 @@ class BaseService {
+@@ -659,7 +660,6 @@ class BaseService {
+ 
+             if (DataStore.serviceError.isNotEmpty()) {
+                 DataStore.serviceError = ""
+-                DataStore.serviceErrorDns = false
+                 DataStore.serviceErrorGeo = false
+                 DataStore.serviceErrorRuleSets = false
+             }
+@@ -675,13 +675,23 @@ class BaseService {
              data.connectingJob = CoroutineScope(Dispatchers.Main).launch {
                  try {
                      preInit()
@@ -854,6 +905,14 @@ index 67d1624..62afe49 100644
                      runCatching { watchWifiRules(proxy) }.onFailure { Logs.w(it) }
  
                      lateInit()
+@@ -692,7 +702,6 @@ class BaseService {
+                     failRunner(
+                         if (exc.servers.isEmpty()) getString(R.string.local_dns_failed_system)
+                         else getString(R.string.local_dns_failed, exc.servers),
+-                        dnsSettings = true,
+                     )
+                 } catch (exc: RuleSetDownloadFailedException) {
+                     failRunner(
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/CoreService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/CoreService.kt
 index b9f3a5e..1871771 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/CoreService.kt
@@ -2372,10 +2431,31 @@ index 0000000..3f73c22
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt b/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt
-index c0a25da..e3771f6 100644
+index c0a25da..9bc4e27 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt
-@@ -336,7 +336,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
+@@ -61,8 +61,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
+     var wifiPermissionAsked by configurationStore.boolean(Key.WIFI_PERMISSION_ASKED)
+     /** Why the last start failed, until the next start or until the user dismisses it. */
+     var serviceError by configurationStore.string(Key.SERVICE_ERROR)
+-    /** [serviceError] asks for a working Direct DNS, so it offers the DNS settings instead of the logs. */
+-    var serviceErrorDns by configurationStore.boolean(Key.SERVICE_ERROR_DNS)
+     /** [serviceError] is about Xray's geoip.dat / geosite.dat, so it offers the geo asset settings instead. */
+     var serviceErrorGeo by configurationStore.boolean(Key.SERVICE_ERROR_GEO)
+     /** [serviceError] is about remote rule-sets that could not be downloaded, so it offers to start without them. */
+@@ -74,11 +72,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
+     var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { true }
+     var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS) { true }
+ 
+-    var appTheme by configurationStore.int(Key.APP_THEME)
+-    var useSystemTheme by configurationStore.boolean(Key.USE_SYSTEM_THEME)
+-    var nightTheme by configurationStore.stringToInt(Key.NIGHT_THEME)
+-    var amoledTheme by configurationStore.boolean(Key.AMOLED_THEME)
+-    var appLanguage by configurationStore.string(Key.APP_LANGUAGE) { "" }
+     var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
+ 
+     var showGroupInNotification by configurationStore.boolean(Key.SHOW_GROUP_IN_NOTIFICATION)
+@@ -336,7 +329,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
      val clashApiEnabled: Boolean get() = coreBoxClashApi > 0
  
      /** core_box_api_port is on: the sing-box API serves the dashboard on that loopback port. */
@@ -2513,7 +2593,7 @@ index 9d0d649..150ee35 100644
              SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
              val db = buildProfileDatabase()
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt b/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
-index 89da43c..6318d43 100644
+index 89da43c..e3ce820 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
 @@ -337,23 +337,11 @@ object SettingsRegistry {
@@ -2541,6 +2621,31 @@ index 89da43c..6318d43 100644
      @JvmField val CORE_BOX_API_PORT = int("core_box_api_port", 9091) { it in -65535..65535 }
      /** Generated on first use when empty (SettingsRepo.cpp:15-19). */
      @JvmField val CORE_BOX_API_SECRET = string("core_box_api_secret", "")
+@@ -379,14 +367,13 @@ object SettingsRegistry {
+         Key.SERVICE_MODE, Key.PROXY_APPS, Key.BYPASS_MODE, Key.INDIVIDUAL, Key.APPEND_HTTP_PROXY, Key.HTTP_PROXY_BYPASS,
+         Key.METERED_NETWORK, Key.ALLOW_BYPASS, Key.WAKE_RESET_CONNECTIONS, Key.NETWORK_CHANGE_RESET_CONNECTIONS,
+         Key.SHOW_DIRECT_SPEED, Key.SHOW_GROUP_IN_NOTIFICATION, Key.NOTIFICATION_ACTIONS,
+-        Key.USE_SYSTEM_THEME, Key.APP_THEME, Key.NIGHT_THEME, Key.AMOLED_THEME, Key.APP_LANGUAGE,
+         Key.ALWAYS_SHOW_ADDRESS, Key.GROUP_LAYOUT_MODE, Key.COMPACT_PROFILE_ROWS, Key.COMPACT_GROUP_CARDS,
+         Key.HIDE_FROM_RECENT_APPS, Key.LOG_BUF_SIZE, Key.LOG_FONT_SIZE, Key.APP_TLS_VERSION,
+         Key.WEBDAV_SERVER, Key.WEBDAV_USERNAME, Key.WEBDAV_PASSWORD, Key.WEBDAV_PATH, Key.DEVICE_ID, Key.DEVICE_NAME,
+         Key.PROFILE_CURRENT, Key.RUNNING_PROFILES, Key.RUNNING_ROUTE, Key.PROFILE_ID, Key.PREVIEW_HINT_DISMISSED_VERSION,
+         Key.UPDATE_CHECK_AUTO, Key.UPDATE_SKIPPED_VERSION_CODE, Key.RESUME_AFTER_UPDATE, Key.BATTERY_PROMPT_SHOWN,
+         Key.LOG_EXPORT_REDACT, Key.HWID_FALLBACK, Key.WIFI_PERMISSION_ASKED, Key.SERVICE_ERROR,
+-        Key.SERVICE_ERROR_DNS, Key.SERVICE_ERROR_GEO, Key.SERVICE_ERROR_RULE_SETS, Key.START_WITHOUT_RULE_SETS,
++        Key.SERVICE_ERROR_GEO, Key.SERVICE_ERROR_RULE_SETS, Key.START_WITHOUT_RULE_SETS,
+     )
+ 
+     /**
+@@ -397,7 +384,7 @@ object SettingsRegistry {
+     val DEVICE_LOCAL_KEYS: Set<String> = setOf(
+         Key.WEBDAV_SERVER, Key.WEBDAV_USERNAME, Key.WEBDAV_PASSWORD, Key.WEBDAV_PATH, Key.DEVICE_ID, Key.DEVICE_NAME,
+         Key.BATTERY_PROMPT_SHOWN, Key.HWID_FALLBACK, Key.RESUME_AFTER_UPDATE, Key.UPDATE_SKIPPED_VERSION_CODE,
+-        Key.WIFI_PERMISSION_ASKED, Key.SERVICE_ERROR, Key.SERVICE_ERROR_DNS, Key.SERVICE_ERROR_GEO,
++        Key.WIFI_PERMISSION_ASKED, Key.SERVICE_ERROR, Key.SERVICE_ERROR_GEO,
+         Key.SERVICE_ERROR_RULE_SETS, Key.START_WITHOUT_RULE_SETS, Key.RUNNING_PROFILES, Key.RUNNING_ROUTE,
+         CORE_BOX_API_PORT.key,
+     )
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/group/SubscriptionClient.kt b/app/src/main/java/io/nekohasekai/sagernet/group/SubscriptionClient.kt
 index 9ae4353..24a2586 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/group/SubscriptionClient.kt
@@ -2978,10 +3083,26 @@ index 128074e..0000000
 -
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
-index 8887b2e..b1bbd30 100644
+index 8887b2e..4d356f4 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
-@@ -90,7 +90,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -15,7 +15,6 @@ import androidx.annotation.StringRes
+ import androidx.appcompat.widget.SearchView
+ import androidx.appcompat.widget.Toolbar
+ import androidx.coordinatorlayout.widget.CoordinatorLayout
+-import androidx.core.content.ContextCompat
+ import androidx.core.os.bundleOf
+ import androidx.core.view.GravityCompat
+ import androidx.core.view.ViewCompat
+@@ -58,7 +57,6 @@ import io.nekohasekai.sagernet.ui.profiles.SubscriptionInfoCard
+ import io.nekohasekai.sagernet.ui.test.TestPanelController
+ import io.nekohasekai.sagernet.ui.test.TestSessionClient
+ import io.nekohasekai.sagernet.ui.test.TestUiState
+-import io.nekohasekai.sagernet.utils.Theme
+ import io.nekohasekai.sagernet.widget.applyInsetMargin
+ import io.nekohasekai.sagernet.widget.applyInsetPadding
+ import kotlinx.coroutines.CoroutineScope
+@@ -90,7 +88,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
          private const val ARG_PICKED_GROUP = "picked_group"
          private const val ARG_TITLE = "title"
          private const val ARG_HIDE_AUTO_SELECTORS = "hide_auto_selectors"
@@ -2989,7 +3110,7 @@ index 8887b2e..b1bbd30 100644
  
          /** Below this height (a phone in landscape) the header hides while the list scrolls down. */
          private const val COMPACT_HEIGHT_DP = 480
-@@ -171,7 +170,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -171,7 +168,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
      var testState = TestUiState()
          private set
      private var subscriptionStates: Map<Long, Int> = emptyMap()
@@ -2997,7 +3118,7 @@ index 8887b2e..b1bbd30 100644
  
      /** Height of the test panel above the navigation bar (the lists pad their bottom by at least it). */
      var panelHeight = 0
-@@ -203,16 +201,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -203,16 +199,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
  
      // ------------------------------------------------------------------------------------------------ lifecycle
  
@@ -3014,7 +3135,7 @@ index 8887b2e..b1bbd30 100644
      override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
          super.onViewCreated(view, savedInstanceState)
          val config = resources.configuration
-@@ -361,6 +349,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -361,6 +347,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
              setNavigationIcon(R.drawable.ic_navigation_close, R.string.navigation_close)
              toolbar.setNavigationOnClickListener { requireActivity().finish() }
          } else {
@@ -3022,7 +3143,22 @@ index 8887b2e..b1bbd30 100644
              toolbar.inflateMenu(R.menu.profile_selection_menu)
              TvControls.addServerSwitch(toolbar.menu, R.id.group_profiles_toolbar)
              groupMenu.setUp(toolbar.menu)
-@@ -758,16 +747,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -424,14 +411,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+         }
+     }
+ 
+-    /** The navigation icon in the toolbar's colours (the white theme draws it dark, as ToolbarFragment does). */
+     private fun setNavigationIcon(@DrawableRes icon: Int, @StringRes description: Int) {
+         val toolbar = toolbar ?: return
+         toolbar.setNavigationIcon(icon)
+         toolbar.setNavigationContentDescription(description)
+-        if (Theme.isWhiteTheme()) {
+-            toolbar.navigationIcon?.setTint(ContextCompat.getColor(requireContext(), R.color.black))
+-        }
+     }
+ 
+     override fun onMenuItemClick(item: MenuItem): Boolean {
+@@ -758,16 +741,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
          lists.forEach { it.adapter.onTestState(state) }
      }
  
@@ -3907,10 +4043,20 @@ index 066aa40..0000000
 -    }
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
-index 650a1a3..c769f95 100644
+index 650a1a3..2e63329 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
-@@ -43,7 +43,6 @@ import io.nekohasekai.sagernet.database.backup.BackupEntry
+@@ -17,7 +17,8 @@ import android.view.ViewGroup
+ import androidx.activity.addCallback
+ import androidx.annotation.IdRes
+ import androidx.appcompat.widget.PopupMenu
+-import androidx.core.content.ContextCompat
++import androidx.fragment.app.Fragment
++import androidx.fragment.app.FragmentFactory
+ import androidx.core.view.ViewCompat
+ import androidx.core.view.updatePaddingRelative
+ import androidx.core.view.WindowCompat
+@@ -43,12 +44,10 @@ import io.nekohasekai.sagernet.database.backup.BackupEntry
  import io.nekohasekai.sagernet.databinding.LayoutMainBinding
  import io.nekohasekai.sagernet.ktx.alert
  import io.nekohasekai.sagernet.ktx.isPreview
@@ -3918,7 +4064,63 @@ index 650a1a3..c769f95 100644
  import io.nekohasekai.sagernet.ktx.onMainDispatcher
  import io.nekohasekai.sagernet.database.SettingsMapper
  import io.nekohasekai.sagernet.outbound.`import`.ProfileImport
-@@ -165,7 +164,6 @@ class MainActivity : ThemedActivity(),
+ import io.nekohasekai.sagernet.ui.route.RouteImports
+-import io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment
+ import io.nekohasekai.sagernet.ui.settings.XrayGeoSettingsFragment
+ import io.nekohasekai.sagernet.ui.test.TestSessionClient
+ import io.nekohasekai.sagernet.ktx.readableMessage
+@@ -75,6 +74,11 @@ class MainActivity : ThemedActivity(),
+     companion object {
+         /** Texts to import (the QR scanner): URLs and deep links one by one, the rest as one import. */
+         const val EXTRA_IMPORT_TEXTS = "importTexts"
++
++        private val REMOVED_SETTINGS_SCREENS = arrayOf(
++            "AppearanceSettingsFragment", "InboundSettingsFragment", "DnsSettingsFragment",
++            "DnsAdvancedSettingsFragment", "PresetSettingsFragment",
++        ).mapTo(HashSet()) { "io.nekohasekai.sagernet.ui.settings.$it" }
+     }
+ 
+     lateinit var binding: LayoutMainBinding
+@@ -82,31 +86,19 @@ class MainActivity : ThemedActivity(),
+     private var currentMainFragment: ToolbarFragment? = null
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
++        // Android can restore a settings screen that was open before this upgrade.
++        supportFragmentManager.fragmentFactory = object : FragmentFactory() {
++            override fun instantiate(classLoader: ClassLoader, className: String): Fragment =
++                if (className in REMOVED_SETTINGS_SCREENS) SettingsPreferenceFragment()
++                else super.instantiate(classLoader, className)
++        }
+         super.onCreate(savedInstanceState)
+         MessageStore.setCurrentActivity(this)
+         val animateInitialControls = savedInstanceState == null
+ 
+         binding = LayoutMainBinding.inflate(layoutInflater)
+         binding.fab.initProgress(binding.fabProgress)
+-        // White theme: a dark FAB with a light icon (white on white is unreadable)
+-        if (Theme.isWhiteTheme()) {
+-            binding.fab.backgroundTintList = android.content.res.ColorStateList.valueOf(
+-                ContextCompat.getColor(this, R.color.color_white_theme_fab)
+-            )
+-        }
+-        if (themeResId !in intArrayOf(
+-                R.style.Theme_SagerNet_Black,
+-                // The White theme and its night fallback read ?itemShapeFillColor too, so the selection stays visible
+-                R.style.Theme_SagerNet_White,
+-                R.style.Theme_SagerNet_White_Night
+-            )
+-        ) {
+-            navigation = binding.navView
+-            binding.drawerLayout.removeView(binding.navViewBlack)
+-        } else {
+-            navigation = binding.navViewBlack
+-            binding.drawerLayout.removeView(binding.navView)
+-        }
++        navigation = binding.navView
+         navigation.setNavigationItemSelectedListener(this)
+         // NavigationView pads its header and menu itself (top/bottom); its side follows side bars and cutouts.
+         ViewCompat.setOnApplyWindowInsetsListener(binding.drawerLayout) { _, insets ->
+@@ -165,7 +157,6 @@ class MainActivity : ThemedActivity(),
          if (savedInstanceState == null) intent?.let(::handleImportIntent)
          SubscriptionReportDialog.observe(this)
  
@@ -3926,7 +4128,7 @@ index 650a1a3..c769f95 100644
  
          if (savedInstanceState == null) {
              firstStart.start()
-@@ -222,13 +220,6 @@ class MainActivity : ThemedActivity(),
+@@ -222,13 +213,6 @@ class MainActivity : ThemedActivity(),
          }
      }
  
@@ -3940,7 +4142,7 @@ index 650a1a3..c769f95 100644
      override fun onNewIntent(intent: Intent) {
          super.onNewIntent(intent)
  
-@@ -406,20 +397,11 @@ class MainActivity : ThemedActivity(),
+@@ -406,20 +390,11 @@ class MainActivity : ThemedActivity(),
              R.id.nav_group -> displayFragment(GroupFragment())
              R.id.nav_route -> displayFragment(RouteFragment())
              R.id.nav_settings -> displayFragment(SettingsFragment())
@@ -3962,7 +4164,7 @@ index 650a1a3..c769f95 100644
          return true
      }
  
-@@ -433,7 +415,6 @@ class MainActivity : ThemedActivity(),
+@@ -433,7 +408,6 @@ class MainActivity : ThemedActivity(),
          refreshConfigurationProfileState()
          when (val fragment = currentMainFragment ?: supportFragmentManager.findFragmentById(R.id.fragment_holder)) {
              is RouteFragment -> fragment.onServiceStateChanged()
@@ -3970,7 +4172,28 @@ index 650a1a3..c769f95 100644
          }
  
          binding.fab.changeState(state, DataStore.serviceState, animate)
-@@ -499,14 +480,13 @@ class MainActivity : ThemedActivity(),
+@@ -455,11 +429,7 @@ class MainActivity : ThemedActivity(),
+         if (errorBar?.isShownOrQueued == true && errorShown == message) return
+         errorShown = message
+         val bar = snackbar(message).setDuration(Snackbar.LENGTH_INDEFINITE)
+-        if (DataStore.serviceErrorDns) {
+-            bar.setAction(R.string.settings_dns) {
+-                openSettingsScreen(DnsSettingsFragment::class.java.name, getString(R.string.settings_dns))
+-            }
+-        } else if (DataStore.serviceErrorGeo) {
++        if (DataStore.serviceErrorGeo) {
+             bar.setAction(R.string.xray_geo_assets_action) {
+                 openSettingsScreen(XrayGeoSettingsFragment::class.java.name, getString(R.string.xray_geo_assets))
+             }
+@@ -472,7 +442,6 @@ class MainActivity : ThemedActivity(),
+             override fun onDismissed(transientBottomBar: Snackbar, event: Int) {
+                 if (event == DISMISS_EVENT_SWIPE || event == DISMISS_EVENT_ACTION) {
+                     DataStore.serviceError = ""
+-                    DataStore.serviceErrorDns = false
+                     DataStore.serviceErrorGeo = false
+                     DataStore.serviceErrorRuleSets = false
+                 }
+@@ -499,14 +468,13 @@ class MainActivity : ThemedActivity(),
          (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)?.showGroup(id)
      }
  
@@ -3986,6 +4209,46 @@ index 650a1a3..c769f95 100644
                  R.id.action_test_speed_current -> {
                      if (!TestSessionClient.startCurrent(TestSpec.KIND_SPEED)) {
                          snackbar(R.string.profiles_test_busy).show()
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsFragment.kt
+index d88a795..483a4b5 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsFragment.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsFragment.kt
+@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.ui
+ import android.os.Bundle
+ import android.view.View
+ import androidx.activity.OnBackPressedCallback
+-import androidx.core.content.ContextCompat
+ import androidx.core.view.GravityCompat
+ import androidx.fragment.app.FragmentManager
+ import androidx.fragment.app.Fragment
+@@ -11,7 +10,6 @@ import androidx.preference.Preference
+ import androidx.preference.PreferenceFragmentCompat
+ import io.nekohasekai.sagernet.R
+ import io.nekohasekai.sagernet.ui.settings.SettingsScreenFragment
+-import io.nekohasekai.sagernet.utils.Theme
+ import io.nekohasekai.sagernet.widget.applyListInsets
+ 
+ /** Hosts the settings root and its sub-screens; back and the toolbar arrow return to the previous screen. */
+@@ -44,7 +42,7 @@ class SettingsFragment : ToolbarFragment(R.layout.layout_config_settings),
+         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+         childFragmentManager.addOnBackStackChangedListener(backStackListener)
+ 
+-        // A recreated activity (theme switch) restores the open sub-screen and its back stack.
++        // A recreated activity restores the open sub-screen and its back stack.
+         if (childFragmentManager.findFragmentById(R.id.settings) == null) {
+             childFragmentManager.beginTransaction()
+                 .replace(R.id.settings, SettingsPreferenceFragment())
+@@ -110,10 +108,6 @@ class SettingsFragment : ToolbarFragment(R.layout.layout_config_settings),
+                 (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START)
+             }
+         }
+-        // White theme: the toolbar is white, so the navigation icon turns dark
+-        if (Theme.isWhiteTheme()) {
+-            toolbar.navigationIcon?.setTint(ContextCompat.getColor(requireContext(), R.color.black))
+-        }
+     }
+ 
+ }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt
 index 2e85779..6a32347 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/SettingsPreferenceFragment.kt
@@ -4027,6 +4290,48 @@ index 2e85779..6a32347 100644
 -        const val KEY_RESET_SETTINGS = "resetSettings"
      }
  }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/ThemedActivity.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/ThemedActivity.kt
+index e161054..ecd7295 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/ThemedActivity.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/ThemedActivity.kt
+@@ -41,7 +41,6 @@ abstract class ThemedActivity : AppCompatActivity {
+         } else {
+             Theme.applyDialog(this)
+         }
+-        Theme.applyNightTheme()
+         if (!isDialog) enableEdgeToEdge(statusBarStyle(), navigationBarStyle())
+ 
+         super.onCreate(savedInstanceState)
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/ToolbarFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/ToolbarFragment.kt
+index f6c7e8a..b85d63a 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/ToolbarFragment.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/ToolbarFragment.kt
+@@ -5,11 +5,9 @@ import android.view.KeyEvent
+ import android.view.View
+ import androidx.appcompat.widget.Toolbar
+ import androidx.core.view.GravityCompat
+-import androidx.core.content.ContextCompat
+ import androidx.fragment.app.Fragment
+ import com.google.android.material.appbar.AppBarLayout
+ import io.nekohasekai.sagernet.R
+-import io.nekohasekai.sagernet.utils.Theme
+ import io.nekohasekai.sagernet.widget.applyTopInset
+ 
+ open class ToolbarFragment : Fragment {
+@@ -26,13 +24,6 @@ open class ToolbarFragment : Fragment {
+         toolbar = view.findViewById(R.id.toolbar)
+         toolbar?.setNavigationIcon(R.drawable.ic_navigation_menu)
+         toolbar?.setNavigationContentDescription(R.string.navigation_open_drawer)
+-        // White theme: the toolbar is white, so the menu, title and navigation icon turn dark
+-        if (Theme.isWhiteTheme()) {
+-            toolbar?.apply {
+-                setTitleTextColor(ContextCompat.getColor(requireContext(), R.color.black))
+-                navigationIcon?.setTint(ContextCompat.getColor(requireContext(), R.color.black))
+-            }
+-        }
+         toolbar?.setNavigationOnClickListener {
+             (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START)
+         }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupActions.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupActions.kt
 index b3f556a..dc4d570 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupActions.kt
@@ -4645,18 +4950,174 @@ index df9a7cb..91ae855 100644
      fun unknownRuleSets(entries: List<String>, catalog: RuleSetCatalog): List<String> = entries.map { it.trim() }
          .filter { it.isNotEmpty() && RouteRule.checkValue("rule_set", it, catalog)?.severity == Severity.Error }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
-index 5d05dd5..34fbc57 100644
+index 5d05dd5..580e355 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
-@@ -25,7 +25,6 @@ import io.nekohasekai.sagernet.outbound.OutboundChecks
- import io.nekohasekai.sagernet.outbound.common.QuicChecks
- import io.nekohasekai.sagernet.outbound.common.TlsChecks
+@@ -21,13 +21,7 @@ import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeLi
+ import io.nekohasekai.sagernet.ktx.needReload
+ import io.nekohasekai.sagernet.ktx.needRestart
+ import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
+-import io.nekohasekai.sagernet.outbound.OutboundChecks
+-import io.nekohasekai.sagernet.outbound.common.QuicChecks
+-import io.nekohasekai.sagernet.outbound.common.TlsChecks
  import io.nekohasekai.sagernet.ui.GroupSettingsActivity
 -import io.nekohasekai.sagernet.ui.MainActivity
- import io.nekohasekai.sagernet.ui.profile.MuxBlock
- import io.nekohasekai.sagernet.ui.profile.XrayMuxBlock
+-import io.nekohasekai.sagernet.ui.profile.MuxBlock
+-import io.nekohasekai.sagernet.ui.profile.XrayMuxBlock
  import io.nekohasekai.sagernet.ui.profile.keepUnlistedValue
-@@ -253,7 +252,7 @@ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
+ import io.nekohasekai.sagernet.validation.Empty
+ import io.nekohasekai.sagernet.validation.Validation
+@@ -38,149 +32,6 @@ import moe.matsuri.nb4a.ui.SimpleMenuPreference
+ import moe.matsuri.nb4a.ui.UrlTestPreference
+ import kotlin.math.abs
+ 
+-/**
+- * Preset Settings: the globals a profile inherits unless it sets its own (multiplex, TLS fragment, TLS tricks, uTLS,
+- * HTTP/2 and QUIC). TLS spoof is left out on Android (decision D8).
+- */
+-class PresetSettingsFragment : SettingsScreenFragment(R.xml.settings_presets) {
+-
+-    override fun bind() {
+-        reloadOn(
+-            SettingsRegistry.MUX_DEFAULT_ON.key, SettingsRegistry.MUX_PROTOCOL.key, SettingsRegistry.MUX_PADDING.key,
+-            SettingsRegistry.XRAY_MUX_DEFAULT_ON.key, SettingsRegistry.XRAY_MUX_XUDP_PROXY_UDP443.key,
+-            SettingsRegistry.FRAGMENT_DEFAULT_ON.key, SettingsRegistry.TLS_TRICKS_DEFAULT_ON.key,
+-            SettingsRegistry.UTLS_FINGERPRINT.key, SettingsRegistry.QUIC_DISABLE_PATH_MTU_DISCOVERY.key,
+-        )
+-        bindSingBoxMux()
+-        bindXrayMux()
+-
+-        // Size and sleep only feed the custom (dialer-level) fragment (dialog_preset_settings.cpp:40-47).
+-        val implementation = pref<SimpleMenuPreference>(SettingsRegistry.FRAGMENT_IMPLEMENTATION.key)
+-        implementation.summaryProvider = Preference.SummaryProvider<SimpleMenuPreference> {
+-            getString(R.string.preset_fragment_implementation_sum, it.entry ?: it.value.orEmpty())
+-        }
+-        val size = pref<EditTextPreference>(SettingsRegistry.FRAGMENT_SIZE.key)
+-        val sleep = pref<EditTextPreference>(SettingsRegistry.FRAGMENT_SLEEP.key)
+-        gateText(size.key, OutboundChecks::tlsFragmentSize, invalid = R.string.invalid_fragment_range, valid = SettingValidators::isRangeOrEmpty)
+-        validation.bind(size.key, OutboundChecks::tlsFragmentSizeLarge).warning()
+-        gateText(sleep.key, OutboundChecks::tlsFragmentSleep, invalid = R.string.invalid_fragment_range, valid = SettingValidators::isRangeOrEmpty)
+-        fragmentRangeSummary(size, SettingsRegistry.FRAGMENT_SIZE.default)
+-        fragmentRangeSummary(sleep, SettingsRegistry.FRAGMENT_SLEEP.default)
+-        fun syncFragment(value: String) {
+-            val custom = value == "custom"
+-            size.isEnabled = custom
+-            sleep.isEnabled = custom
+-        }
+-        syncFragment(DataStore.fragmentImplementation)
+-        implementation.setOnPreferenceChangeListener { _, newValue ->
+-            syncFragment(newValue as String)
+-            needReload()
+-            true
+-        }
+-        // the desktop combo is editable, so a restored fingerprint may be one the menu does not list
+-        pref<SimpleMenuPreference>(SettingsRegistry.UTLS_FINGERPRINT.key).keepUnlistedValue()
+-        validation.bind(SettingsRegistry.UTLS_FINGERPRINT.key, TlsChecks::singBoxFingerprint)
+-
+-        for (key in listOf(SettingsRegistry.H2_IDLE_TIMEOUT.key, SettingsRegistry.H2_KEEP_ALIVE_PERIOD.key)) {
+-            gateText(key, Validation.Rules.duration(), invalid = R.string.invalid_duration, valid = SettingValidators::isDurationOrEmpty)
+-        }
+-        gateText(SettingsRegistry.H2_STREAM_RECEIVE_WINDOW.key, Validation.Rules.memoryBytes(true))
+-        gateText(SettingsRegistry.H2_CONNECTION_RECEIVE_WINDOW.key, Validation.Rules.memoryBytes(true))
+-        // 0 keeps the core default and is shown as such (dialog_preset_settings.cpp:12-16).
+-        checkInt(SettingsRegistry.H2_MAX_CONCURRENT_STREAMS.key, R.string.invalid_number, blankAs = 0) { it >= 0 }
+-        gateInt(SettingsRegistry.QUIC_INITIAL_PACKET_SIZE.key, QuicChecks::quicInitialPacketSize, blankAs = 0)
+-        placeholder(SettingsRegistry.H2_IDLE_TIMEOUT.key, "30s")
+-        placeholder(SettingsRegistry.H2_KEEP_ALIVE_PERIOD.key, "15s")
+-        placeholder(SettingsRegistry.H2_STREAM_RECEIVE_WINDOW.key, "8 MB")
+-        placeholder(SettingsRegistry.H2_CONNECTION_RECEIVE_WINDOW.key, "64 MB")
+-        zeroAsDefault(SettingsRegistry.H2_MAX_CONCURRENT_STREAMS.key)
+-        zeroAsDefault(SettingsRegistry.QUIC_INITIAL_PACKET_SIZE.key)
+-    }
+-
+-    /** The sing-box multiplex preset, the desktop's MuxSettingsWidget (dialog_preset_settings.cpp:28, 75, 104). */
+-    private fun bindSingBoxMux() {
+-        val count = Validation.Rules.int(1, Int.MAX_VALUE.toLong(), Empty.Required)
+-        for (setting in listOf(SettingsRegistry.MUX_CONCURRENCY, SettingsRegistry.MUX_MAX_CONNECTIONS)) {
+-            gateInt(setting.key, count)
+-        }
+-        gateInt(SettingsRegistry.MUX_MIN_STREAMS.key, Validation.Rules.int(0, Int.MAX_VALUE.toLong()), blankAs = 0)
+-        // The speeds stay on screen so they can be set before TCP Brutal is switched on; like the desktop they are
+-        // required only while it is on, and switching it on is refused until both are set.
+-        val brutal = pref<SwitchPreference>(SettingsRegistry.MUX_BRUTAL.key)
+-        var brutalOn = brutal.isChecked
+-        for (setting in listOf(SettingsRegistry.MUX_BRUTAL_UP_MBPS, SettingsRegistry.MUX_BRUTAL_DOWN_MBPS)) {
+-            gateInt(setting.key, count).onlyIf { brutalOn }
+-        }
+-
+-        val keys = mapOf(
+-            "mode" to SettingsRegistry.MUX_MODE.key,
+-            "max_streams" to SettingsRegistry.MUX_CONCURRENCY.key,
+-            "max_connections" to SettingsRegistry.MUX_MAX_CONNECTIONS.key,
+-            "min_streams" to SettingsRegistry.MUX_MIN_STREAMS.key,
+-            "brutal.up_mbps" to SettingsRegistry.MUX_BRUTAL_UP_MBPS.key,
+-            "brutal.down_mbps" to SettingsRegistry.MUX_BRUTAL_DOWN_MBPS.key,
+-        )
+-        val mode = pref<SimpleMenuPreference>(SettingsRegistry.MUX_MODE.key)
+-        fun sync(modeValue: String = mode.value.orEmpty()) =
+-            MuxBlock.poolVisibility(this, modeValue, brutalOn, speedsAlways = true) { keys.getValue(it) }
+-        sync()
+-        mode.setOnPreferenceChangeListener { _, newValue ->
+-            sync(modeValue = newValue as String)
+-            needReload()
+-            true
+-        }
+-        brutal.setOnPreferenceChangeListener { _, newValue ->
+-            val on = newValue as Boolean
+-            if (on && (DataStore.muxBrutalUpMbps <= 0 || DataStore.muxBrutalDownMbps <= 0)) {
+-                refuse(brutal, getString(R.string.validation_mux_brutal_both_speeds))
+-                return@setOnPreferenceChangeListener false
+-            }
+-            brutalOn = on
+-            sync()
+-            validation.refresh()
+-            needReload()
+-            true
+-        }
+-        MuxBlock.modeSummary(this, mode.key)
+-    }
+-
+-    /** The Xray mux preset, the desktop's XrayMuxSettingsWidget (dialog_preset_settings.cpp:30, 76, 106). */
+-    private fun bindXrayMux() {
+-        gateInt(SettingsRegistry.XRAY_MUX_CONCURRENCY.key, XrayMuxBlock.COUNT_RULE)
+-        gateInt(SettingsRegistry.XRAY_MUX_MAX_CONNECTIONS.key, XrayMuxBlock.MAX_CONNECTIONS_RULE, blankAs = 0)
+-        gateInt(SettingsRegistry.XRAY_MUX_XUDP_CONCURRENCY.key, XrayMuxBlock.COUNT_RULE)
+-        val keys = mapOf(
+-            "concurrency" to SettingsRegistry.XRAY_MUX_CONCURRENCY.key,
+-            "maxConnections" to SettingsRegistry.XRAY_MUX_MAX_CONNECTIONS.key,
+-            "xudpConcurrency" to SettingsRegistry.XRAY_MUX_XUDP_CONCURRENCY.key,
+-            "xudpProxyUDP443" to SettingsRegistry.XRAY_MUX_XUDP_PROXY_UDP443.key,
+-        )
+-        // After the gates, whose number input is unsigned.
+-        XrayMuxBlock.inputs(this) { keys.getValue(it) }
+-    }
+-
+-    private fun placeholder(key: String, defaultText: String) {
+-        pref<EditTextPreference>(key).summaryProvider = DefaultSummaryProvider(defaultText)
+-    }
+-
+-    private fun fragmentRangeSummary(preference: EditTextPreference, default: String) {
+-        preference.summaryProvider = Preference.SummaryProvider<EditTextPreference> {
+-            when {
+-                !it.isEnabled -> getString(R.string.preset_custom_implementation_only)
+-                it.text.isNullOrEmpty() -> getString(R.string.setting_default_value, default)
+-                else -> it.text
+-            }
+-        }
+-    }
+-
+-    private fun zeroAsDefault(key: String) {
+-        pref<EditTextPreference>(key).summaryProvider = Preference.SummaryProvider<EditTextPreference> { preference ->
+-            val text = preference.text.orEmpty()
+-            if (text.isEmpty() || text == "0") getString(R.string.setting_default) else text
+-        }
+-    }
+-}
+-
+ /** Basic Settings › Common › Testing. */
+ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
+ 
+@@ -253,7 +104,7 @@ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
  }
  
  /**
@@ -4665,7 +5126,7 @@ index 5d05dd5..34fbc57 100644
   * certificate defaults and the NTP client.
   */
  class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
-@@ -314,7 +313,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -314,7 +165,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
          )
  
          bindClashApi()
@@ -4674,7 +5135,7 @@ index 5d05dd5..34fbc57 100644
          bindNtp()
      }
  
-@@ -363,10 +362,10 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -363,10 +214,10 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
      }
  
      /**
@@ -4687,7 +5148,7 @@ index 5d05dd5..34fbc57 100644
          val enabled = pref<SwitchPreference>(KEY_API_ENABLED)
          val port = pref<EditTextPreference>(KEY_API_PORT)
          val secret = pref<EditTextPreference>(SettingsRegistry.CORE_BOX_API_SECRET.key)
-@@ -376,7 +375,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -376,7 +227,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
              secret.isEnabled = on
          }
  
@@ -4696,7 +5157,7 @@ index 5d05dd5..34fbc57 100644
          port.text = portValue().toString()
          port.summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
          port.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-@@ -388,7 +387,6 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -388,7 +239,6 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
              val on = newValue as Boolean
              DataStore.coreBoxApiPort = if (on) portValue() else -portValue()
              sync(on)
@@ -4704,7 +5165,7 @@ index 5d05dd5..34fbc57 100644
              needReload()
              true
          }
-@@ -445,7 +443,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -445,7 +295,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
      private companion object {
          const val KEY_CLASH_ENABLED = "coreClashApiEnabled"
          const val KEY_CLASH_PORT = "coreClashApiPort"
@@ -4714,6 +5175,600 @@ index 5d05dd5..34fbc57 100644
 +        const val KEY_API_PORT = "coreBoxApiPort"
      }
  }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/DnsServerPreference.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/DnsServerPreference.kt
+deleted file mode 100644
+index fed5494..0000000
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/DnsServerPreference.kt
++++ /dev/null
+@@ -1,35 +0,0 @@
+-package io.nekohasekai.sagernet.ui.settings
+-
+-import android.content.Context
+-import android.util.AttributeSet
+-import android.widget.AutoCompleteTextView
+-import androidx.core.content.res.TypedArrayUtils
+-import androidx.preference.EditTextPreference
+-import com.google.android.material.textfield.TextInputLayout
+-import io.nekohasekai.sagernet.R
+-import io.nekohasekai.sagernet.ui.DnsServerSuggestions
+-
+-/** A DNS server setting whose dialog offers [suggestions] (DnsServerHistory::Fill), read each time it opens. */
+-class DnsServerPreference
+-@JvmOverloads
+-constructor(
+-    context: Context,
+-    attrs: AttributeSet? = null,
+-    defStyleAttr: Int = TypedArrayUtils.getAttr(
+-        context, R.attr.editTextPreferenceStyle,
+-        android.R.attr.editTextPreferenceStyle
+-    ),
+-    defStyleRes: Int = 0
+-) : EditTextPreference(context, attrs, defStyleAttr, defStyleRes) {
+-
+-    var suggestions: () -> List<String> = { emptyList() }
+-
+-    init {
+-        dialogLayoutResource = R.layout.layout_dns_server_dialog
+-        setOnBindEditTextListener { edit ->
+-            val field = edit as? AutoCompleteTextView ?: return@setOnBindEditTextListener
+-            val layout = edit.rootView.findViewById<TextInputLayout>(R.id.server_layout) ?: return@setOnBindEditTextListener
+-            DnsServerSuggestions.attach(layout, field, suggestions())
+-        }
+-    }
+-}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/DnsSettingsScreens.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/DnsSettingsScreens.kt
+deleted file mode 100644
+index d10d21f..0000000
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/DnsSettingsScreens.kt
++++ /dev/null
+@@ -1,206 +0,0 @@
+-package io.nekohasekai.sagernet.ui.settings
+-
+-import androidx.lifecycle.lifecycleScope
+-import androidx.preference.EditTextPreference
+-import androidx.preference.Preference
+-import androidx.preference.PreferenceCategory
+-import androidx.preference.SwitchPreference
+-import io.nekohasekai.sagernet.R
+-import io.nekohasekai.sagernet.database.DnsServerHistory
+-import io.nekohasekai.sagernet.database.RouteManager
+-import io.nekohasekai.sagernet.database.SagerDatabase
+-import io.nekohasekai.sagernet.database.SettingValidators
+-import io.nekohasekai.sagernet.database.SettingsRegistry
+-import io.nekohasekai.sagernet.ktx.needReload
+-import io.nekohasekai.sagernet.outbound.config.DnsServers
+-import io.nekohasekai.sagernet.validation.Empty
+-import io.nekohasekai.sagernet.validation.Rule
+-import io.nekohasekai.sagernet.validation.Validation
+-import io.nekohasekai.sagernet.validation.vtr
+-import kotlinx.coroutines.Dispatchers
+-import kotlinx.coroutines.launch
+-import kotlinx.coroutines.withContext
+-import moe.matsuri.nb4a.ui.EditConfigPreference
+-
+-/** Routing Settings › DNS: the simple settings, predefined answers and the custom DNS object. */
+-class DnsSettingsFragment : SettingsScreenFragment(R.xml.settings_dns) {
+-
+-    override fun bind() {
+-        // dialog_manage_routes.cpp's server rules.
+-        val server: Rule = { DnsServers.dnsAddressListProblem(it) }
+-        gateText(SettingsRegistry.REMOTE_DNS.key, server, invalid = R.string.invalid_dns_address) { it.isNotEmpty() }
+-        gateText(SettingsRegistry.DIRECT_DNS.key, server, invalid = R.string.invalid_dns_address) { it.isNotEmpty() }
+-        pref<DnsServerPreference>(SettingsRegistry.REMOTE_DNS.key).suggestions = DnsServerHistory::remoteSuggestions
+-        pref<DnsServerPreference>(SettingsRegistry.DIRECT_DNS.key).suggestions = DnsServerHistory::directSuggestions
+-        acceptServers(SettingsRegistry.REMOTE_DNS.key, DnsServerHistory::rememberRemote)
+-        acceptServers(SettingsRegistry.DIRECT_DNS.key, DnsServerHistory::rememberDirect)
+-        gateText(SettingsRegistry.CORE_BOX_UNDERLYING_DNS.key, ::localDnsProblem, invalid = R.string.invalid_dns_address)
+-        reloadOn(
+-            SettingsRegistry.REMOTE_DNS_DISABLE_IPV6.key, SettingsRegistry.DIRECT_DNS_DISABLE_IPV6.key,
+-            SettingsRegistry.DNS_FINAL_OUT.key, SettingsRegistry.ENABLE_DNS_ROUTING.key,
+-            SettingsRegistry.FAKEIP_DISABLE_IPV6.key, SettingsRegistry.DNS_USE_HOSTS.key,
+-        )
+-        pref<EditTextPreference>(SettingsRegistry.CORE_BOX_UNDERLYING_DNS.key).summaryProvider =
+-            DefaultSummaryProvider("local")
+-
+-        // FakeIP Disable IPv6 only means something with FakeIP on (dialog_manage_routes.cpp:328-329).
+-        val fakeIpv6 = pref<SwitchPreference>(SettingsRegistry.FAKEIP_DISABLE_IPV6.key)
+-        val fakedns = pref<SwitchPreference>(SettingsRegistry.FAKEDNS.key)
+-        fakeIpv6.isEnabled = fakedns.isChecked
+-        fakedns.setOnPreferenceChangeListener { _, newValue ->
+-            fakeIpv6.isEnabled = newValue as Boolean
+-            needReload()
+-            true
+-        }
+-
+-        val rules = pref<StringListPreference>(SettingsRegistry.DNS_PREDEFINED_RULES.key)
+-        val predefined = pref<SwitchPreference>(SettingsRegistry.DNS_PREDEFINED_ENABLE.key)
+-        rules.isEnabled = predefined.isChecked
+-        predefined.setOnPreferenceChangeListener { _, newValue ->
+-            rules.isEnabled = newValue as Boolean
+-            needReload()
+-            true
+-        }
+-        rules.setOnPreferenceChangeListener { _, newValue ->
+-            val lines = SettingValidators.lines(newValue as String?)
+-            if (!SettingValidators.isPredefinedDns(lines)) {
+-                val bad = lines.firstOrNull { !SettingValidators.isPredefinedDns(listOf(it)) } ?: ""
+-                toast(R.string.invalid_predefined_dns, bad)
+-                return@setOnPreferenceChangeListener false
+-            }
+-            needReload()
+-            true
+-        }
+-
+-        // A custom DNS object replaces the whole section (dialog_manage_routes.cpp:345-351).
+-        val servers = pref<PreferenceCategory>(KEY_SERVERS)
+-        val behaviour = pref<PreferenceCategory>(KEY_BEHAVIOUR)
+-        val advanced = pref<Preference>(KEY_ADVANCED)
+-        val dnsObject = pref<EditConfigPreference>(SettingsRegistry.DNS_OBJECT.key)
+-        dnsObject.useConfigStore(SettingsRegistry.DNS_OBJECT.key)
+-        fun sync(useObject: Boolean) {
+-            servers.isEnabled = !useObject
+-            behaviour.isEnabled = !useObject
+-            advanced.isEnabled = !useObject
+-            dnsObject.isEnabled = useObject
+-        }
+-        val useObject = pref<SwitchPreference>(SettingsRegistry.USE_DNS_OBJECT.key)
+-        sync(useObject.isChecked)
+-        useObject.setOnPreferenceChangeListener { _, newValue ->
+-            sync(newValue as Boolean)
+-            needReload()
+-            true
+-        }
+-    }
+-
+-    /**
+-     * dialog_manage_routes.cpp:accept: the server list is stored as NormalizeDnsAddressList gives it, and
+-     * DnsServerHistory::Remember takes a list the screen took in place of another.
+-     */
+-    private fun acceptServers(key: String, remember: (String) -> Unit) {
+-        val preference = pref<EditTextPreference>(key)
+-        val check = preference.onPreferenceChangeListener
+-        preference.setOnPreferenceChangeListener { p, newValue ->
+-            val before = preference.text.orEmpty()
+-            val raw = newValue?.toString().orEmpty()
+-            val value = DnsServers.normalizeDnsAddressList(raw)
+-            // A refused value leaves the text as it was.
+-            if (check?.onPreferenceChange(p, value) == false) return@setOnPreferenceChangeListener false
+-            if (value != before) remember(value)
+-            if (value == raw) return@setOnPreferenceChangeListener true
+-            // setText persists without calling the listener again.
+-            preference.text = value
+-            false
+-        }
+-    }
+-
+-    override fun onResume() {
+-        super.onResume()
+-        showRouteOverride()
+-    }
+-
+-    /** The own DNS of the routing profile in effect replaces the servers and behaviour here (RouteDns::Current). */
+-    private fun showRouteOverride() {
+-        val note = findPreference<Preference>(KEY_ROUTE_OVERRIDE) ?: return
+-        lifecycleScope.launch {
+-            val name = withContext(Dispatchers.IO) {
+-                val id = RouteManager.activeRouteId()
+-                if (RouteManager.customDns(id) == null) null else SagerDatabase.routeDao.getProfile(id)?.name
+-            }
+-            note.summary = name?.let { getString(R.string.dns_route_override_note, it) }
+-            note.isVisible = name != null
+-        }
+-    }
+-
+-    /** dns-local resolves the other servers' names, so it cannot depend on one itself. */
+-    private fun localDnsProblem(text: String): String {
+-        if (text.isEmpty()) return ""
+-        val parsed = DnsServers.parseDnsAddress(text)
+-        val address = parsed.address ?: return parsed.why
+-        if (address.type == "local" || address.type == "dhcp" || Validation.ip(address.server).isEmpty()) return ""
+-        return vtr(R.string.validation_dns_local_ip)
+-    }
+-
+-    private companion object {
+-        const val KEY_SERVERS = "dnsServers"
+-        const val KEY_BEHAVIOUR = "dnsBehaviour"
+-        const val KEY_ADVANCED = "dnsAdvanced"
+-        const val KEY_ROUTE_OVERRIDE = "dnsRouteOverride"
+-    }
+-}
+-
+-/** Routing Settings › DNS › Advanced Settings (dialog_manage_routes.cpp:167-254). */
+-class DnsAdvancedSettingsFragment : SettingsScreenFragment(R.xml.settings_dns_advanced) {
+-
+-    override fun bind() {
+-        val capacity = SettingsRegistry.DNS_CACHE_CAPACITY.key
+-        gateInt(capacity, Validation.Rules.int(0, Int.MAX_VALUE.toLong(), Empty.Required))
+-        validation.bind(capacity) {
+-            val value = Validation.toInt(it)
+-            if (value != null && value in 1L..1023L) vtr(R.string.validation_dns_cache_small) else ""
+-        }.warning()
+-        for (key in listOf(SettingsRegistry.DNS_QUERY_TIMEOUT.key, SettingsRegistry.DNS_OPTIMISTIC_TIMEOUT.key)) {
+-            gateText(key, Validation.Rules.duration(), invalid = R.string.invalid_duration, valid = SettingValidators::isDurationOrEmpty)
+-        }
+-        pref<EditTextPreference>(SettingsRegistry.DNS_QUERY_TIMEOUT.key).summaryProvider = DefaultSummaryProvider("10s")
+-        pref<EditTextPreference>(SettingsRegistry.DNS_OPTIMISTIC_TIMEOUT.key).summaryProvider = DefaultSummaryProvider("3d")
+-        reloadOn(SettingsRegistry.DNS_PERSIST_CACHE.key, SettingsRegistry.DNS_REVERSE_MAPPING.key)
+-
+-        val optimistic = pref<SwitchPreference>(SettingsRegistry.DNS_OPTIMISTIC.key)
+-        val optimisticTimeout = pref<Preference>(SettingsRegistry.DNS_OPTIMISTIC_TIMEOUT.key)
+-        val disableCache = pref<SwitchPreference>(SettingsRegistry.DNS_DISABLE_CACHE.key)
+-        val disableExpire = pref<SwitchPreference>(SettingsRegistry.DNS_DISABLE_EXPIRE.key)
+-        val persistCache = pref<Preference>(SettingsRegistry.DNS_PERSIST_CACHE.key)
+-
+-        // The core refuses optimistic with either cache switch, and a disabled cache never reaches the cache file.
+-        fun sync(optimisticOn: Boolean, cacheOff: Boolean, expireOff: Boolean) {
+-            if (cacheOff || expireOff) {
+-                if (optimistic.isChecked) optimistic.isChecked = false
+-                optimistic.isEnabled = false
+-            } else {
+-                optimistic.isEnabled = true
+-            }
+-            val optimisticNow = optimisticOn && !cacheOff && !expireOff
+-            optimisticTimeout.isEnabled = optimisticNow
+-            disableCache.isEnabled = !optimisticNow
+-            disableExpire.isEnabled = !optimisticNow
+-            persistCache.isEnabled = !cacheOff
+-        }
+-        sync(optimistic.isChecked, disableCache.isChecked, disableExpire.isChecked)
+-        optimistic.setOnPreferenceChangeListener { _, newValue ->
+-            sync(newValue as Boolean, disableCache.isChecked, disableExpire.isChecked)
+-            needReload()
+-            true
+-        }
+-        disableCache.setOnPreferenceChangeListener { _, newValue ->
+-            sync(optimistic.isChecked, newValue as Boolean, disableExpire.isChecked)
+-            needReload()
+-            true
+-        }
+-        disableExpire.setOnPreferenceChangeListener { _, newValue ->
+-            sync(optimistic.isChecked, disableCache.isChecked, newValue as Boolean)
+-            needReload()
+-            true
+-        }
+-    }
+-}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/GeneralSettingsScreens.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/GeneralSettingsScreens.kt
+index d95a1df..90242a7 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/GeneralSettingsScreens.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/GeneralSettingsScreens.kt
+@@ -1,41 +1,21 @@
+ package io.nekohasekai.sagernet.ui.settings
+ 
+-import android.content.ActivityNotFoundException
+-import android.content.Intent
+-import android.net.Uri
+ import android.os.Build
+-import android.provider.Settings
+-import android.view.LayoutInflater
+-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+-import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+-import android.widget.LinearLayout
+-import androidx.core.app.ActivityCompat
+-import androidx.core.app.NotificationManagerCompat
+-import androidx.preference.MultiSelectListPreference
+ import androidx.preference.Preference
+-import androidx.preference.PreferenceDataStore
+ import androidx.preference.SwitchPreference
+-import com.google.android.material.checkbox.MaterialCheckBox
+-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+ import io.nekohasekai.sagernet.BootReceiver
+ import io.nekohasekai.sagernet.BuildConfig
+ import io.nekohasekai.sagernet.Key
+ import io.nekohasekai.sagernet.R
+ import io.nekohasekai.sagernet.SagerNet
+-import io.nekohasekai.sagernet.bg.ServiceNotification
+ import io.nekohasekai.sagernet.database.DataStore
+ import io.nekohasekai.sagernet.database.SettingsRegistry
+-import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
+ import io.nekohasekai.sagernet.ktx.remove
+ import io.nekohasekai.sagernet.ui.MainActivity
+ import io.nekohasekai.sagernet.update.UpdateScheduler
+ import io.nekohasekai.sagernet.utils.AlwaysOnVpn
+-import io.nekohasekai.sagernet.utils.AppLocale
+ import io.nekohasekai.sagernet.utils.BatteryOptimizations
+ import io.nekohasekai.sagernet.utils.OemBackground
+-import io.nekohasekai.sagernet.utils.Theme
+-import moe.matsuri.nb4a.ui.ColorPickerPreference
+-import moe.matsuri.nb4a.ui.SimpleMenuPreference
+ 
+ /** Service mode, auto connect (remember_enable) and the connection behaviour switches. */
+ class GeneralSettingsFragment : SettingsScreenFragment(R.xml.settings_general) {
+@@ -124,152 +104,3 @@ class GeneralSettingsFragment : SettingsScreenFragment(R.xml.settings_general) {
+         const val KEY_UPDATES = "cag_updates"
+     }
+ }
+-
+-/** Theme, language, profile list and notification options (all Android-only). */
+-class AppearanceSettingsFragment : SettingsScreenFragment(R.xml.settings_appearance) {
+-
+-    override fun bind() {
+-        val appTheme = pref<ColorPickerPreference>(Key.APP_THEME)
+-        val useSystemTheme = pref<SwitchPreference>(Key.USE_SYSTEM_THEME)
+-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+-            useSystemTheme.isVisible = false
+-        } else {
+-            useSystemTheme.setOnPreferenceChangeListener { _, newValue ->
+-                appTheme.isEnabled = !(newValue as Boolean)
+-                applyThemeInstantly()
+-                true
+-            }
+-            appTheme.isEnabled = !DataStore.useSystemTheme
+-        }
+-        appTheme.setOnPreferenceChangeListener { _, _ ->
+-            applyThemeInstantly()
+-            true
+-        }
+-        pref<SimpleMenuPreference>(Key.NIGHT_THEME).setOnPreferenceChangeListener { _, newTheme ->
+-            Theme.currentNightMode = (newTheme as String).toInt()
+-            Theme.applyNightTheme()
+-            true
+-        }
+-        // AMOLED black: recreate the host so the overlay is applied or removed
+-        pref<SwitchPreference>(Key.AMOLED_THEME).setOnPreferenceChangeListener { _, _ ->
+-            applyThemeInstantly()
+-            true
+-        }
+-        pref<SimpleMenuPreference>(Key.APP_LANGUAGE).setOnPreferenceChangeListener { _, newValue ->
+-            AppLocale.apply(newValue as String)
+-            true
+-        }
+-        DataStore.configurationStore.registerChangeListener(notificationListener)
+-
+-        pref<MultiSelectListPreference>(Key.NOTIFICATION_ACTIONS).summaryProvider =
+-            Preference.SummaryProvider<MultiSelectListPreference> { p ->
+-                val chosen = p.values
+-                p.entryValues.indices.filter { p.entryValues[it].toString() in chosen }
+-                    .joinToString(", ") { p.entries[it] }
+-                    .ifEmpty { getString(androidx.preference.R.string.not_set) }
+-            }
+-        notificationPermission = pref(KEY_NOTIFICATION_PERMISSION)
+-        notificationPermission.setOnPreferenceClickListener {
+-            openNotificationSettings()
+-            true
+-        }
+-    }
+-
+-    private lateinit var notificationPermission: Preference
+-
+-    // After the write, so the service reads the new value.
+-    private val notificationListener = object : OnPreferenceDataStoreChangeListener {
+-        override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
+-            if (key in NOTIFICATION_KEYS && DataStore.serviceState.started) SagerNet.refreshNotification()
+-        }
+-    }
+-
+-    override fun onDestroy() {
+-        DataStore.configurationStore.unregisterChangeListener(notificationListener)
+-        super.onDestroy()
+-    }
+-
+-    override fun onDisplayPreferenceDialog(preference: Preference) {
+-        if (preference.key == Key.NOTIFICATION_ACTIONS) {
+-            pickNotificationActions(preference as MultiSelectListPreference)
+-        } else {
+-            super.onDisplayPreferenceDialog(preference)
+-        }
+-    }
+-
+-    /** The template shows three buttons: once three are ticked the others are greyed out. */
+-    private fun pickNotificationActions(preference: MultiSelectListPreference) {
+-        val builder = MaterialAlertDialogBuilder(requireContext())
+-        val view = LayoutInflater.from(builder.context).inflate(R.layout.layout_notification_actions, null)
+-        val list = view.findViewById<LinearLayout>(R.id.actions)
+-        val values = preference.entryValues.map { it.toString() }
+-        val boxes = preference.entries.mapIndexed { i, entry ->
+-            MaterialCheckBox(list.context).apply {
+-                text = entry
+-                isChecked = values[i] in preference.values
+-                list.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+-            }
+-        }
+-        fun sync() {
+-            val full = boxes.count { it.isChecked } >= ServiceNotification.MAX_ACTIONS
+-            for (box in boxes) box.isEnabled = box.isChecked || !full
+-        }
+-        for (box in boxes) box.setOnCheckedChangeListener { _, _ -> sync() }
+-        sync()
+-        builder.setTitle(preference.title)
+-            .setView(view)
+-            .setPositiveButton(android.R.string.ok) { _, _ ->
+-                val chosen = values.filterIndexedTo(HashSet()) { i, _ -> boxes[i].isChecked }
+-                if (preference.callChangeListener(chosen)) preference.values = chosen
+-            }
+-            .setNegativeButton(android.R.string.cancel, null)
+-            .show()
+-    }
+-
+-    override fun onResume() {
+-        super.onResume()
+-        if (::notificationPermission.isInitialized) {
+-            notificationPermission.setSummary(
+-                if (NotificationManagerCompat.from(requireContext()).areNotificationsEnabled()) {
+-                    R.string.notification_permission_allowed
+-                } else {
+-                    R.string.notification_permission_blocked
+-                }
+-            )
+-        }
+-    }
+-
+-    private fun openNotificationSettings() {
+-        val context = requireContext()
+-        val app = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+-        val intent = if (Build.VERSION.SDK_INT >= 26) {
+-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+-        } else {
+-            app
+-        }
+-        for (candidate in listOf(intent, app)) {
+-            try {
+-                startActivity(candidate)
+-                return
+-            } catch (_: ActivityNotFoundException) {
+-            } catch (_: SecurityException) {
+-            }
+-        }
+-    }
+-
+-    // Appearance changes apply at once: the recreated host applies the theme and the AMOLED overlay
+-    // from DataStore in onCreate; posted to the next frame to stay out of the running preference/dialog transaction
+-    private fun applyThemeInstantly() {
+-        val host = activity ?: return
+-        host.window?.decorView?.post {
+-            if (!host.isFinishing && !host.isDestroyed) {
+-                ActivityCompat.recreate(host)
+-            }
+-        }
+-    }
+-
+-    private companion object {
+-        const val KEY_NOTIFICATION_PERMISSION = "notificationPermission"
+-        val NOTIFICATION_KEYS = setOf(Key.NOTIFICATION_ACTIONS, Key.SHOW_DIRECT_SPEED, Key.SHOW_GROUP_IN_NOTIFICATION)
+-    }
+-}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/NetworkSettingsScreens.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/NetworkSettingsScreens.kt
+index 6004e54..3e455cf 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/NetworkSettingsScreens.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/NetworkSettingsScreens.kt
+@@ -1,8 +1,6 @@
+ package io.nekohasekai.sagernet.ui.settings
+ 
+ import android.content.Intent
+-import android.os.Build
+-import android.widget.Toast
+ import androidx.preference.EditTextPreference
+ import androidx.preference.Preference
+ import androidx.preference.SwitchPreference
+@@ -17,7 +15,6 @@ import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
+ import io.nekohasekai.sagernet.group.RemoteRouteUpdater
+ import io.nekohasekai.sagernet.ktx.needReload
+ import io.nekohasekai.sagernet.ui.AppManagerActivity
+-import io.nekohasekai.sagernet.ui.GroupSettingsActivity
+ import io.nekohasekai.sagernet.ui.MainActivity
+ import io.nekohasekai.sagernet.ui.route.RouteQuickSwitch
+ import io.nekohasekai.sagernet.validation.Empty
+@@ -28,120 +25,10 @@ import io.nekohasekai.sagernet.validation.vtr
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+-import moe.matsuri.nb4a.ui.EditConfigPreference
+ import moe.matsuri.nb4a.ui.MTUPreference
+ import moe.matsuri.nb4a.ui.SimpleMenuPreference
+ import kotlin.math.abs
+ 
+-/**
+- * The mixed inbound (Basic Settings › Inbound Settings) and the DNS server port (Basic Settings › Core), plus the
+- * Android system HTTP proxy switch and its bypass list.
+- */
+-class InboundSettingsFragment : SettingsScreenFragment(R.xml.settings_inbound) {
+-
+-    override fun beforeInflate() {
+-        DataStore.initGlobal()
+-    }
+-
+-    override fun bind() {
+-        val port = pref<EditTextPreference>(SettingsRegistry.INBOUND_SOCKS_PORT.key)
+-        val randomPort = pref<SwitchPreference>(SettingsRegistry.RANDOM_INBOUND_PORT.key)
+-        val allowLan = pref<SwitchPreference>(KEY_ALLOW_LAN)
+-        val auth = pref<SwitchPreference>(SettingsRegistry.INBOUND_AUTH.key)
+-        val user = pref<EditTextPreference>(SettingsRegistry.INBOUND_USER.key)
+-        val pass = pref<EditTextPreference>(SettingsRegistry.INBOUND_PASS.key)
+-        val appendHttpProxy = pref<SwitchPreference>(Key.APPEND_HTTP_PROXY)
+-        val httpProxyBypass = pref<EditTextPreference>(Key.HTTP_PROXY_BYPASS)
+-        val dnsInPort = pref<EditTextPreference>(SettingsRegistry.CORE_DNS_IN_PORT.key)
+-
+-        // The four local listeners need distinct ports; the Clash and sing-box API ports are on the Core screen.
+-        gateText(port.key, SettingChecks.listenPort(SettingChecks.Listener.MIXED), invalid = R.string.invalid_port, valid = SettingValidators::isPort)
+-        port.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
+-        // dialog_basic_settings.cpp:255-256.
+-        gateText(dnsInPort.key, SettingChecks.listenPort(SettingChecks.Listener.DNS), invalid = R.string.invalid_port, valid = SettingValidators::isPort)
+-        dnsInPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
+-        // The address itself has no field: the LAN switch writes it, so a restored one that is not an IP marks the switch.
+-        validation.bind(KEY_ALLOW_LAN) {
+-            val address = DataStore.inboundAddress
+-            Validation.ip(address).ifEmpty { null }?.let { vtr(R.string.validation_form_issue, address, it) }.orEmpty()
+-        }
+-        pass.summaryProvider = GroupSettingsActivity.PasswordSummaryProvider
+-        httpProxyBypass.setOnBindEditTextListener(EditTextPreferenceModifiers.Hosts)
+-        httpProxyBypass.summaryProvider = LinesSummaryProvider(maxLines = 1)
+-        pref<EditConfigPreference>(SettingsRegistry.CUSTOM_INBOUND.key).useConfigStore(SettingsRegistry.CUSTOM_INBOUND.key)
+-
+-        allowLan.isChecked = DataStore.allowLanAccess
+-        allowLan.setOnPreferenceChangeListener { _, newValue ->
+-            DataStore.inboundAddress = if (newValue as Boolean) SettingsRegistry.LAN_ADDRESS else SettingsRegistry.LOOPBACK_ADDRESS
+-            needReload()
+-            true
+-        }
+-
+-        var mixedDisabled = DataStore.disableMixedInbound
+-        fun updateHttpProxyState(authOn: Boolean = auth.isChecked, append: Boolean = appendHttpProxy.isChecked) {
+-            appendHttpProxy.isEnabled = !mixedDisabled && !authOn
+-            appendHttpProxy.summary = getString(
+-                when {
+-                    mixedDisabled -> R.string.append_http_proxy_mixed_disabled
+-                    authOn -> R.string.append_http_proxy_auth_on
+-                    else -> R.string.append_http_proxy_sum
+-                }
+-            )
+-            httpProxyBypass.isEnabled = appendHttpProxy.isEnabled && append
+-        }
+-
+-        fun updateMixedState(disabled: Boolean) {
+-            mixedDisabled = disabled
+-            for (p in listOf(port, randomPort, allowLan, auth, user, pass)) p.isEnabled = !disabled
+-            if (disabled) {
+-                port.summaryProvider = null
+-                port.summary = getString(R.string.mixed_inbound_disabled)
+-            } else {
+-                port.summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
+-            }
+-            user.isEnabled = !disabled && auth.isChecked
+-            pass.isEnabled = !disabled && auth.isChecked
+-            updateHttpProxyState()
+-        }
+-        updateMixedState(mixedDisabled)
+-        pref<SwitchPreference>(SettingsRegistry.DISABLE_MIXED_INBOUND.key).setOnPreferenceChangeListener { _, newValue ->
+-            val disabled = newValue as Boolean
+-            if (disabled && DataStore.serviceMode == Key.MODE_PROXY) {
+-                Toast.makeText(
+-                    requireContext(),
+-                    getString(R.string.disable_mixed_inbound_proxy_toast, DataStore.inboundSocksPort),
+-                    Toast.LENGTH_LONG
+-                ).show()
+-            }
+-            updateMixedState(disabled)
+-            needReload()
+-            true
+-        }
+-        auth.setOnPreferenceChangeListener { _, newValue ->
+-            user.isEnabled = newValue as Boolean
+-            pass.isEnabled = newValue
+-            updateHttpProxyState(authOn = newValue)
+-            needReload()
+-            true
+-        }
+-        appendHttpProxy.setOnPreferenceChangeListener { _, newValue ->
+-            updateHttpProxyState(append = newValue as Boolean)
+-            needReload()
+-            true
+-        }
+-        // VpnService.Builder.setHttpProxy needs Android 10.
+-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+-            appendHttpProxy.isVisible = false
+-            httpProxyBypass.isVisible = false
+-        }
+-        reloadOn(randomPort.key, user.key, pass.key, httpProxyBypass.key)
+-    }
+-
+-    private companion object {
+-        const val KEY_ALLOW_LAN = "inboundAllowLan"
+-    }
+-}
+-
+ /** Tun Settings: stack, MTU, IPv6, tun routing, private range bypass, per-app proxy and the tun addresses. */
+ class TunSettingsFragment : SettingsScreenFragment(R.xml.settings_tun) {
+ 
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/SettingChecks.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/SettingChecks.kt
 index 16b0262..4bc17f8 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/SettingChecks.kt
@@ -4777,6 +5832,230 @@ index d3fca47..50a761b 100644
              working[id] = RankedResult(
                  profileId = id,
                  latency = row.latency,
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/utils/AppLocale.kt b/app/src/main/java/io/nekohasekai/sagernet/utils/AppLocale.kt
+deleted file mode 100644
+index ebc1614..0000000
+--- a/app/src/main/java/io/nekohasekai/sagernet/utils/AppLocale.kt
++++ /dev/null
+@@ -1,24 +0,0 @@
+-package io.nekohasekai.sagernet.utils
+-
+-import androidx.appcompat.app.AppCompatDelegate
+-import androidx.core.os.LocaleListCompat
+-import io.nekohasekai.sagernet.database.DataStore
+-
+-object AppLocale {
+-
+-    // Empty tag means "follow system".
+-    fun localeList(tag: String?): LocaleListCompat {
+-        return if (tag.isNullOrEmpty()) {
+-            LocaleListCompat.getEmptyLocaleList()
+-        } else {
+-            LocaleListCompat.forLanguageTags(tag)
+-        }
+-    }
+-
+-    // Applies the in-app language. AppCompat handles persistence (API 33+ via the
+-    // framework, below via SharedPreferences) and recreates active activities.
+-    fun apply(tag: String? = DataStore.appLanguage) {
+-        AppCompatDelegate.setApplicationLocales(localeList(tag))
+-    }
+-
+-}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/utils/Theme.kt b/app/src/main/java/io/nekohasekai/sagernet/utils/Theme.kt
+index 0e8e560..2f3836b 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/utils/Theme.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/utils/Theme.kt
+@@ -2,184 +2,17 @@ package io.nekohasekai.sagernet.utils
+ 
+ import android.content.Context
+ import android.content.res.Configuration
+-import android.os.Build
+-import androidx.appcompat.app.AppCompatDelegate
+ import io.nekohasekai.sagernet.R
+-import io.nekohasekai.sagernet.database.DataStore
+ import io.nekohasekai.sagernet.ktx.app
+-import io.nekohasekai.sagernet.SagerNet
+ 
+ object Theme {
+ 
+-    const val MONET = 0
+-    const val RED = 1
+-    const val PINK_SSR = 2
+-    const val PINK = 3
+-    const val PURPLE = 4
+-    const val DEEP_PURPLE = 5
+-    const val INDIGO = 6
+-    const val BLUE = 7
+-    const val LIGHT_BLUE = 8
+-    const val CYAN = 9
+-    const val TEAL = 10
+-    const val GREEN = 11
+-    const val LIGHT_GREEN = 12
+-    const val LIME = 13
+-    const val YELLOW = 14
+-    const val AMBER = 15
+-    const val ORANGE = 16
+-    const val DEEP_ORANGE = 17
+-    const val BROWN = 18
+-    const val GREY = 19
+-    const val BLUE_GREY = 20
+-    const val BLACK = 21
+-    const val VERDANT_MINT = 22
+-    const val WHITE = 23
++    fun apply(context: Context) = context.setTheme(getTheme())
+ 
+-    private fun defaultTheme() = PINK_SSR
++    fun applyDialog(context: Context) = context.setTheme(R.style.Theme_SagerNet_Dialog_Pink_SSR)
+ 
+-    fun apply(context: Context) {
+-        context.setTheme(getTheme())
+-        applyAmoledOverlay(context)
+-    }
+-
+-    fun applyDialog(context: Context) {
+-        context.setTheme(getDialogTheme())
+-        applyAmoledOverlay(context)
+-    }
+-
+-    // Night mode with AMOLED black: the black overlay goes on top of the theme
+-    private fun applyAmoledOverlay(context: Context) {
+-        if (DataStore.amoledTheme && usingNightMode()) {
+-            context.theme.applyStyle(R.style.Theme_SagerNet_Amoled, true)
+-            // White falls back to Black at night, whose app bar (colorPrimary) is dark grey; OLED makes it black.
+-            // Not under Monet, so the Monet colours are not flattened to black
+-            if (DataStore.appTheme == WHITE && !usingMonetTheme()) {
+-                context.theme.applyStyle(R.style.Theme_SagerNet_Amoled_White, true)
+-            }
+-        }
+-    }
+-
+-    // Whether system dynamic colour (Monet) is in effect; it disables every White-theme adjustment
+-    fun usingMonetTheme(): Boolean {
+-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && DataStore.useSystemTheme
+-    }
+-
+-    fun getTheme(): Int {
+-        return if (usingMonetTheme()) {
+-            getTheme(MONET)
+-        } else {
+-            getTheme(DataStore.appTheme)
+-        }
+-    }
+-
+-    fun getDialogTheme(): Int {
+-        return if (usingMonetTheme()) {
+-            getDialogTheme(MONET)
+-        } else {
+-            getDialogTheme(DataStore.appTheme)
+-        }
+-    }
+-
+-    fun getTheme(theme: Int): Int {
+-        return when (theme) {
+-            MONET -> R.style.Theme_SagerNet_Monet
+-            RED -> R.style.Theme_SagerNet_Red
+-            PINK -> R.style.Theme_SagerNet
+-            PINK_SSR -> R.style.Theme_SagerNet_Pink_SSR
+-            PURPLE -> R.style.Theme_SagerNet_Purple
+-            DEEP_PURPLE -> R.style.Theme_SagerNet_DeepPurple
+-            INDIGO -> R.style.Theme_SagerNet_Indigo
+-            BLUE -> R.style.Theme_SagerNet_Blue
+-            LIGHT_BLUE -> R.style.Theme_SagerNet_LightBlue
+-            CYAN -> R.style.Theme_SagerNet_Cyan
+-            TEAL -> R.style.Theme_SagerNet_Teal
+-            GREEN -> R.style.Theme_SagerNet_Green
+-            LIGHT_GREEN -> R.style.Theme_SagerNet_LightGreen
+-            LIME -> R.style.Theme_SagerNet_Lime
+-            YELLOW -> R.style.Theme_SagerNet_Yellow
+-            AMBER -> R.style.Theme_SagerNet_Amber
+-            ORANGE -> R.style.Theme_SagerNet_Orange
+-            DEEP_ORANGE -> R.style.Theme_SagerNet_DeepOrange
+-            BROWN -> R.style.Theme_SagerNet_Brown
+-            GREY -> R.style.Theme_SagerNet_Grey
+-            BLUE_GREY -> R.style.Theme_SagerNet_BlueGrey
+-            BLACK -> R.style.Theme_SagerNet_Black
+-            VERDANT_MINT -> R.style.Theme_SagerNet_VerdantMint
+-            WHITE ->
+-                // White only applies outside night mode; at night it falls back to Black
+-                if (usingNightMode()) R.style.Theme_SagerNet_White_Night else R.style.Theme_SagerNet_White
+-            else -> getTheme(defaultTheme())
+-        }
+-    }
+-
+-    fun getDialogTheme(theme: Int): Int {
+-        return when (theme) {
+-            MONET -> R.style.Theme_SagerNet_Dialog_Monet
+-            RED -> R.style.Theme_SagerNet_Dialog_Red
+-            PINK -> R.style.Theme_SagerNet_Dialog
+-            PINK_SSR -> R.style.Theme_SagerNet_Dialog_Pink_SSR
+-            PURPLE -> R.style.Theme_SagerNet_Dialog_Purple
+-            DEEP_PURPLE -> R.style.Theme_SagerNet_Dialog_DeepPurple
+-            INDIGO -> R.style.Theme_SagerNet_Dialog_Indigo
+-            BLUE -> R.style.Theme_SagerNet_Dialog_Blue
+-            LIGHT_BLUE -> R.style.Theme_SagerNet_Dialog_LightBlue
+-            CYAN -> R.style.Theme_SagerNet_Dialog_Cyan
+-            TEAL -> R.style.Theme_SagerNet_Dialog_Teal
+-            GREEN -> R.style.Theme_SagerNet_Dialog_Green
+-            LIGHT_GREEN -> R.style.Theme_SagerNet_Dialog_LightGreen
+-            LIME -> R.style.Theme_SagerNet_Dialog_Lime
+-            YELLOW -> R.style.Theme_SagerNet_Dialog_Yellow
+-            AMBER -> R.style.Theme_SagerNet_Dialog_Amber
+-            ORANGE -> R.style.Theme_SagerNet_Dialog_Orange
+-            DEEP_ORANGE -> R.style.Theme_SagerNet_Dialog_DeepOrange
+-            BROWN -> R.style.Theme_SagerNet_Dialog_Brown
+-            GREY -> R.style.Theme_SagerNet_Dialog_Grey
+-            BLUE_GREY -> R.style.Theme_SagerNet_Dialog_BlueGrey
+-            BLACK -> R.style.Theme_SagerNet_Dialog_Black
+-            VERDANT_MINT -> R.style.Theme_SagerNet_Dialog_VerdantMint
+-            WHITE ->
+-                if (usingNightMode()) R.style.Theme_SagerNet_Dialog_White_Night else R.style.Theme_SagerNet_Dialog_White
+-            else -> getDialogTheme(defaultTheme())
+-        }
+-    }
+-
+-    // Whether the White theme is in effect (not at night, where it falls back to Black, and not under Monet)
+-    fun isWhiteTheme(): Boolean {
+-        if (usingMonetTheme()) {
+-            return false
+-        }
+-        return DataStore.appTheme == WHITE && !usingNightMode()
+-    }
+-
+-    var currentNightMode = -1
+-    fun getNightMode(): Int {
+-        if (currentNightMode == -1) {
+-            currentNightMode = DataStore.nightTheme
+-        }
+-        return getNightMode(currentNightMode)
+-    }
+-
+-    fun getNightMode(mode: Int): Int {
+-        return when (mode) {
+-            0 -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+-            1 -> AppCompatDelegate.MODE_NIGHT_YES
+-            2 -> AppCompatDelegate.MODE_NIGHT_NO
+-            else -> AppCompatDelegate.MODE_NIGHT_AUTO_BATTERY
+-        }
+-    }
+-
+-    fun usingNightMode(): Boolean {
+-        return when (DataStore.nightTheme) {
+-            0 -> (app.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+-            1 -> true
+-            2 -> false
+-            else -> SagerNet.power.isPowerSaveMode
+-        }
+-    }
+-
+-    fun applyNightTheme() {
+-        AppCompatDelegate.setDefaultNightMode(getNightMode())
+-    }
++    fun getTheme(): Int = R.style.Theme_SagerNet_Pink_SSR
+ 
++    fun usingNightMode(): Boolean =
++        (app.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+ }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/widget/LiveChartView.kt b/app/src/main/java/io/nekohasekai/sagernet/widget/LiveChartView.kt
 deleted file mode 100644
 index f5095f0..0000000
@@ -6084,6 +7363,148 @@ index 337e9ac..2ebc0a4 100644
              } catch (e: UnknownHostException) {
                  null
              } ?: InetAddress.getAllByName(domain)
+diff --git a/app/src/main/java/moe/matsuri/nb4a/ui/ColorPickerPreference.kt b/app/src/main/java/moe/matsuri/nb4a/ui/ColorPickerPreference.kt
+deleted file mode 100644
+index 2a9f0ff..0000000
+--- a/app/src/main/java/moe/matsuri/nb4a/ui/ColorPickerPreference.kt
++++ /dev/null
+@@ -1,136 +0,0 @@
+-package moe.matsuri.nb4a.ui
+-
+-import android.content.Context
+-import android.content.res.Resources
+-import android.graphics.drawable.Drawable
+-import android.graphics.drawable.GradientDrawable
+-import android.graphics.drawable.InsetDrawable
+-import android.util.AttributeSet
+-import android.view.Gravity
+-import android.view.View
+-import android.view.ViewGroup
+-import android.widget.GridLayout
+-import android.widget.ImageView
+-import android.widget.LinearLayout
+-import androidx.appcompat.app.AlertDialog
+-import androidx.core.content.ContextCompat
+-import androidx.core.content.res.ResourcesCompat
+-import androidx.core.content.res.TypedArrayUtils
+-import androidx.core.graphics.drawable.DrawableCompat
+-import androidx.core.view.setPadding
+-import androidx.preference.Preference
+-import androidx.preference.PreferenceViewHolder
+-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+-import io.nekohasekai.sagernet.R
+-import io.nekohasekai.sagernet.ktx.getColorAttr
+-import kotlin.math.roundToInt
+-
+-class ColorPickerPreference
+-@JvmOverloads constructor(
+-    context: Context, attrs: AttributeSet? = null, defStyle: Int = TypedArrayUtils.getAttr(
+-        context,
+-        androidx.preference.R.attr.editTextPreferenceStyle,
+-        android.R.attr.editTextPreferenceStyle
+-    )
+-) : Preference(
+-    context, attrs, defStyle
+-) {
+-
+-    var inited = false
+-
+-    override fun onBindViewHolder(holder: PreferenceViewHolder) {
+-        super.onBindViewHolder(holder)
+-
+-        val widgetFrame = holder.findViewById(android.R.id.widget_frame) as LinearLayout
+-
+-        if (!inited) {
+-            inited = true
+-
+-            val previewColor = context.getColorAttr(R.attr.colorPrimary)
+-            val preview = getNekoImageViewAtColor(previewColor, 48, 0)
+-            applyWhiteSwatchBorder(preview, previewColor)
+-            widgetFrame.addView(preview)
+-            widgetFrame.visibility = View.VISIBLE
+-        }
+-    }
+-
+-    private fun applyWhiteSwatchBorder(view: ImageView, color: Int) {
+-        // A white swatch is invisible on white: add a dashed outline
+-        if (color != ContextCompat.getColor(context, R.color.color_white_theme)) return
+-        val factor = view.resources.displayMetrics.density
+-        val ring = GradientDrawable().apply {
+-            shape = GradientDrawable.OVAL
+-            setColor(color)
+-            setStroke(
+-                (2 * factor).roundToInt(), 0xFF9E9E9E.toInt(),
+-                4 * factor, 3 * factor
+-            )
+-        }
+-        // The icon's inner circle spans 2/3 of the viewport: inset by 1/6 so the dashes hug the swatch
+-        val inset = (view.layoutParams.width ?: 0) / 6
+-        view.background = InsetDrawable(ring, inset, inset, inset, inset)
+-    }
+-
+-    fun getNekoImageViewAtColor(color: Int, sizeDp: Int, paddingDp: Int): ImageView {
+-        // dp to pixel
+-        val factor = context.resources.displayMetrics.density
+-        val size = (sizeDp * factor).roundToInt()
+-        val paddingSize = (paddingDp * factor).roundToInt()
+-
+-        return ImageView(context).apply {
+-            layoutParams = ViewGroup.LayoutParams(size, size)
+-            setPadding(paddingSize)
+-            setImageDrawable(getNekoAtColor(resources, color))
+-        }
+-    }
+-
+-    fun getNekoAtColor(res: Resources, color: Int): Drawable {
+-        val neko = ResourcesCompat.getDrawable(
+-            res,
+-            R.drawable.ic_baseline_fiber_manual_record_24,
+-            null
+-        )!!
+-        DrawableCompat.setTint(neko.mutate(), color)
+-        return neko
+-    }
+-
+-    override fun onClick() {
+-        super.onClick()
+-
+-        lateinit var dialog: AlertDialog
+-
+-        val grid = GridLayout(context).apply {
+-            columnCount = 4
+-
+-            val colors = context.resources.getIntArray(R.array.material_colors)
+-            var i = 0
+-
+-            for (color in colors) {
+-                i++ //Theme.kt
+-
+-                val themeId = i
+-                val view = getNekoImageViewAtColor(color, 64, 0).apply {
+-                    applyWhiteSwatchBorder(this, color)
+-                    setOnClickListener {
+-                        persistInt(themeId)
+-                        dialog.dismiss()
+-                        callChangeListener(themeId)
+-                    }
+-                }
+-                addView(view)
+-            }
+-
+-        }
+-
+-        dialog = MaterialAlertDialogBuilder(context).setTitle(title)
+-            .setView(LinearLayout(context).apply {
+-                gravity = Gravity.CENTER
+-                layoutParams = ViewGroup.LayoutParams(
+-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+-                )
+-                addView(grid)
+-            })
+-            .setNegativeButton(android.R.string.cancel, null)
+-            .show()
+-    }
+-}
 diff --git a/app/src/main/java/moe/matsuri/nb4a/utils/JavaUtil.java b/app/src/main/java/moe/matsuri/nb4a/utils/JavaUtil.java
 index 6490c8d..ad58156 100644
 --- a/app/src/main/java/moe/matsuri/nb4a/utils/JavaUtil.java
@@ -6622,6 +8043,59 @@ index 32d6e2b..0000000
 -    </FrameLayout>
 -
 -</LinearLayout>
+diff --git a/app/src/main/res/layout/layout_dns_server_dialog.xml b/app/src/main/res/layout/layout_dns_server_dialog.xml
+deleted file mode 100644
+index 19fd4ef..0000000
+--- a/app/src/main/res/layout/layout_dns_server_dialog.xml
++++ /dev/null
+@@ -1,47 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?><!-- Based on: https://android.googlesource.com/platform/frameworks/support/+/b4cd329/preference/preference/res/layout/preference_dialog_edittext.xml -->
+-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+-    xmlns:app="http://schemas.android.com/apk/res-auto"
+-    android:layout_width="match_parent"
+-    android:layout_height="match_parent"
+-    android:layout_marginTop="48dp"
+-    android:layout_marginBottom="48dp"
+-    android:overScrollMode="ifContentScrolls">
+-
+-    <LinearLayout
+-        android:layout_width="match_parent"
+-        android:layout_height="wrap_content"
+-        android:orientation="vertical">
+-
+-        <TextView
+-            android:id="@android:id/message"
+-            style="?android:attr/textAppearanceSmall"
+-            android:layout_width="match_parent"
+-            android:layout_height="wrap_content"
+-            android:layout_marginStart="24dp"
+-            android:layout_marginEnd="24dp"
+-            android:layout_marginBottom="24dp"
+-            android:textColor="?android:attr/textColorSecondary" />
+-
+-        <com.google.android.material.textfield.TextInputLayout
+-            android:id="@+id/server_layout"
+-            android:layout_width="match_parent"
+-            android:layout_height="wrap_content"
+-            android:layout_marginStart="20dp"
+-            android:layout_marginEnd="20dp"
+-            app:endIconContentDescription="@string/dns_server_suggestions"
+-            app:endIconDrawable="@drawable/ic_baseline_expand_more_24"
+-            app:endIconMode="custom">
+-
+-            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+-                android:id="@android:id/edit"
+-                style="@style/Widget.MaterialComponents.AutoCompleteTextView.OutlinedBox"
+-                android:layout_width="match_parent"
+-                android:layout_height="wrap_content"
+-                android:completionThreshold="1"
+-                android:inputType="textUri"
+-                android:maxLines="1"
+-                android:typeface="monospace" />
+-
+-        </com.google.android.material.textfield.TextInputLayout>
+-    </LinearLayout>
+-</ScrollView>
 diff --git a/app/src/main/res/layout/layout_live_graphs.xml b/app/src/main/res/layout/layout_live_graphs.xml
 deleted file mode 100644
 index f314161..0000000
@@ -6999,6 +8473,63 @@ index 0376830..0000000
 -        tools:text="32.0 kB/s" />
 -
 -</LinearLayout>
+diff --git a/app/src/main/res/layout/layout_main.xml b/app/src/main/res/layout/layout_main.xml
+index 70f960d..ffcf2c8 100644
+--- a/app/src/main/res/layout/layout_main.xml
++++ b/app/src/main/res/layout/layout_main.xml
+@@ -82,21 +82,5 @@
+         app:itemTextColor="@color/navigation_icon"
+         app:menu="@menu/main_drawer_menu" />
+ 
+-    <com.google.android.material.navigation.NavigationView
+-        android:id="@+id/nav_view_black"
+-        style="@style/Widget.Design.NavigationView"
+-        app:insetForeground="@android:color/transparent"
+-        android:layout_width="wrap_content"
+-        android:layout_height="match_parent"
+-        android:layout_gravity="start"
+-        app:itemIconTint="@color/navigation_icon"
+-        app:itemShapeAppearance="@style/ShapeAppearance.SagerNet.NavItem"
+-        app:itemShapeFillColor="@color/navigation_item"
+-        app:itemShapeInsetStart="8dp"
+-        app:itemShapeInsetEnd="8dp"
+-        app:itemShapeInsetTop="3dp"
+-        app:itemShapeInsetBottom="3dp"
+-        app:itemTextColor="@color/navigation_icon"
+-        app:menu="@menu/main_drawer_menu" />
+ 
+ </androidx.drawerlayout.widget.DrawerLayout>
+diff --git a/app/src/main/res/layout/layout_notification_actions.xml b/app/src/main/res/layout/layout_notification_actions.xml
+deleted file mode 100644
+index cd99345..0000000
+--- a/app/src/main/res/layout/layout_notification_actions.xml
++++ /dev/null
+@@ -1,25 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:layout_width="match_parent"
+-    android:layout_height="wrap_content">
+-
+-    <LinearLayout
+-        android:id="@+id/actions"
+-        android:layout_width="match_parent"
+-        android:layout_height="wrap_content"
+-        android:orientation="vertical"
+-        android:paddingStart="24dp"
+-        android:paddingTop="8dp"
+-        android:paddingEnd="24dp">
+-
+-        <TextView
+-            android:layout_width="match_parent"
+-            android:layout_height="wrap_content"
+-            android:layout_marginBottom="8dp"
+-            android:text="@string/notification_actions_too_many"
+-            android:textAppearance="?android:attr/textAppearanceMedium"
+-            android:textColor="?android:attr/textColorSecondary" />
+-
+-    </LinearLayout>
+-
+-</androidx.core.widget.NestedScrollView>
 diff --git a/app/src/main/res/layout/layout_profile.xml b/app/src/main/res/layout/layout_profile.xml
 index 95423dd..6edd62b 100644
 --- a/app/src/main/res/layout/layout_profile.xml
@@ -9581,7 +11112,7 @@ index d5f26ab..b0307d6 100644
          <item>Автоматически</item>
          <item>TCP</item>
 diff --git a/app/src/main/res/values-ru/strings.xml b/app/src/main/res/values-ru/strings.xml
-index 9cdeb91..c220304 100644
+index 9cdeb91..0f48c5f 100644
 --- a/app/src/main/res/values-ru/strings.xml
 +++ b/app/src/main/res/values-ru/strings.xml
 @@ -110,9 +110,7 @@
@@ -9602,6 +11133,17 @@ index 9cdeb91..c220304 100644
  <string name="route_profile">Выбрать профиль…</string>
  <string name="route_proxy">Прокси</string>
  <string name="search_apps">Поиск…</string>
+@@ -184,8 +181,8 @@
+ <string name="server_address">Сервер</string>
+ <string name="server_port">Удаленный порт</string>
+ <string name="service_failed">Не удалось:</string>
+-<string name="local_dns_failed">Не удалось подключиться: DNS сети (%1$s) не ответил. Настройте рабочий прямой DNS.</string>
+-<string name="local_dns_failed_system">Не удалось подключиться: DNS системы не ответил. Настройте рабочий прямой DNS.</string>
++<string name="local_dns_failed">Не удалось подключиться: DNS сети (%1$s) не ответил. Проверьте подключение к сети.</string>
++<string name="local_dns_failed_system">Не удалось подключиться: DNS системы не ответил. Проверьте подключение к сети.</string>
+ <string name="service_mode">Сервисный режим</string>
+ <string name="service_mode_proxy">Только прокси</string>
+ <string name="service_proxy">Прокси-сервис</string>
 @@ -615,7 +612,7 @@
      <string name="battery_optimization">Оптимизация батареи</string>
      <string name="battery_prompt_allow">Разрешить</string>
@@ -10040,6 +11582,30 @@ index f42f0b2..0000000
 -    <color name="widget_accent">@android:color/system_accent1_600</color>
 -    <color name="widget_on_accent">@android:color/system_accent1_0</color>
 -    <color name="widget_off_fill">@android:color/system_neutral2_100</color>
+-</resources>
+diff --git a/app/src/main/res/values-v31/themes.xml b/app/src/main/res/values-v31/themes.xml
+deleted file mode 100644
+index 9bcb550..0000000
+--- a/app/src/main/res/values-v31/themes.xml
++++ /dev/null
+@@ -1,18 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<resources>
+-
+-    <style name="Theme.SagerNet.Monet" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/monet_primary</item>
+-        <item name="colorPrimaryDark">@color/monet_primary_variant</item>
+-        <item name="colorAccent">@color/monet_secondary</item>
+-        <item name="cardElevatedSurfaceColor">@color/monet_card_elevated</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Monet" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/monet_primary</item>
+-        <item name="colorPrimaryDark">@color/monet_primary_variant</item>
+-        <item name="colorAccent">@color/monet_secondary</item>
+-        <item name="cardElevatedSurfaceColor">@color/monet_card_elevated</item>
+-    </style>
+-
 -</resources>
 diff --git a/app/src/main/res/values-zh-rCN/arrays.xml b/app/src/main/res/values-zh-rCN/arrays.xml
 index 32bd1c0..1c5efbe 100644
@@ -10560,7 +12126,7 @@ index a42c72e..8084a7a 100644
 +    <item name="nav_route" type="id" />
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 8b6872e..d7d15d0 100644
+index 8b6872e..98e62fa 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -9,7 +9,6 @@
@@ -10579,6 +12145,17 @@ index 8b6872e..d7d15d0 100644
      <string name="action_copy">Copy</string>
      <!-- toolbar navigation button -->
      <string name="navigation_open_drawer">Open navigation drawer</string>
+@@ -138,8 +136,8 @@
+     <string name="forward_success">Proxy started.</string>
+     <string name="invalid_server">Invalid server name</string>
+     <string name="service_failed">Failed: </string>
+-    <string name="local_dns_failed">Could not connect: the network\'s DNS (%1$s) did not answer. Set a working Direct DNS.</string>
+-    <string name="local_dns_failed_system">Could not connect: the system DNS did not answer. Set a working Direct DNS.</string>
++    <string name="local_dns_failed">Could not connect: the network\'s DNS (%1$s) did not answer. Check the network connection.</string>
++    <string name="local_dns_failed_system">Could not connect: the system DNS did not answer. Check the network connection.</string>
+     <string name="stop">Stop</string>
+     <string name="stopping">Shutting down…</string>
+     <string name="vpn_error">%s</string>
 @@ -357,7 +355,6 @@
      <string name="preview_hint_dont_show_again">Don\'t show again</string>
      <string name="update_dialog_title">New version available</string>
@@ -10709,6 +12286,421 @@ index 8b6872e..d7d15d0 100644
 +    <string name="connection_quality_test">Connection quality</string>
 +    <string name="connection_quality_score" translatable="false">%1$d/100</string>
  </resources>
+diff --git a/app/src/main/res/values/themes.xml b/app/src/main/res/values/themes.xml
+index 51a3801..3c61dd3 100644
+--- a/app/src/main/res/values/themes.xml
++++ b/app/src/main/res/values/themes.xml
+@@ -8,7 +8,7 @@
+         <item name="colorPrimaryDark">@color/material_pink_700</item>
+         <item name="colorAccent">@color/material_pink_accent_200</item>
+ 
+-        <!-- Elevated card surface: Pink by default, each colour variant below overrides it -->
++        <!-- Elevated card surface: the built-in theme supplies its colour -->
+         <item name="cardElevatedSurfaceColor">@color/card_elevated_pink</item>
+ 
+         <item name="accentOrTextSecondary">?colorAccent</item>
+@@ -64,7 +64,7 @@
+         <item name="colorPrimaryDark">@color/material_pink_700</item>
+         <item name="colorAccent">@color/material_pink_accent_200</item>
+ 
+-        <!-- Elevated card surface: Pink by default, each colour variant below overrides it -->
++        <!-- Elevated card surface: the built-in theme supplies its colour -->
+         <item name="cardElevatedSurfaceColor">@color/card_elevated_pink</item>
+ 
+         <item name="accentOrTextSecondary">?colorAccent</item>
+@@ -294,255 +294,6 @@
+         <item name="cardElevatedSurfaceColor">@color/card_elevated_pink_ssr</item>
+     </style>
+ 
+-    <style name="Theme.SagerNet.Amber" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_amber_500</item>
+-        <item name="colorPrimaryDark">@color/material_amber_700</item>
+-        <item name="colorAccent">@color/material_amber_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_amber</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Blue" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_blue_500</item>
+-        <item name="colorPrimaryDark">@color/material_blue_700</item>
+-        <item name="colorAccent">@color/material_blue_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_blue</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.BlueGrey" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_blue_grey_500</item>
+-        <item name="colorPrimaryDark">@color/material_blue_grey_700</item>
+-        <item name="colorAccent">@color/material_blue_grey_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_blue_grey</item>
+-        <item name="dialogButtonColor">@color/dialog_button_blue_grey</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Brown" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_brown_500</item>
+-        <item name="colorPrimaryDark">@color/material_brown_700</item>
+-        <item name="colorAccent">@color/material_brown_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_brown</item>
+-        <item name="dialogButtonColor">@color/dialog_button_brown</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Cyan" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_cyan_500</item>
+-        <item name="colorPrimaryDark">@color/material_cyan_700</item>
+-        <item name="colorAccent">@color/material_cyan_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_cyan</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.DeepOrange" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_deep_orange_500</item>
+-        <item name="colorPrimaryDark">@color/material_deep_orange_700</item>
+-        <item name="colorAccent">@color/material_deep_orange_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_deep_orange</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.DeepPurple" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_deep_purple_500</item>
+-        <item name="colorPrimaryDark">@color/material_deep_purple_700</item>
+-        <item name="colorAccent">@color/material_deep_purple_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_deep_purple</item>
+-        <item name="dialogButtonColor">@color/dialog_button_deep_purple</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Green" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_green_500</item>
+-        <item name="colorPrimaryDark">@color/material_green_700</item>
+-        <item name="colorAccent">@color/material_green_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_green</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Grey" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_grey_500</item>
+-        <item name="colorPrimaryDark">@color/material_grey_700</item>
+-        <item name="colorAccent">@color/material_grey_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_grey</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Indigo" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_indigo_500</item>
+-        <item name="colorPrimaryDark">@color/material_indigo_700</item>
+-        <item name="colorAccent">@color/material_indigo_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_indigo</item>
+-        <item name="dialogButtonColor">@color/dialog_button_indigo</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.LightBlue" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_light_blue_500</item>
+-        <item name="colorPrimaryDark">@color/material_light_blue_700</item>
+-        <item name="colorAccent">@color/material_light_blue_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_light_blue</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.LightGreen" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_light_green_500</item>
+-        <item name="colorPrimaryDark">@color/material_light_green_700</item>
+-        <item name="colorAccent">@color/material_light_green_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_light_green</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Lime" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_lime_500</item>
+-        <item name="colorPrimaryDark">@color/material_lime_700</item>
+-        <item name="colorAccent">@color/material_lime_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_lime</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Orange" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_orange_500</item>
+-        <item name="colorPrimaryDark">@color/material_orange_700</item>
+-        <item name="colorAccent">@color/material_orange_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_orange</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Purple" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_purple_500</item>
+-        <item name="colorPrimaryDark">@color/material_purple_700</item>
+-        <item name="colorAccent">@color/material_purple_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_purple</item>
+-        <item name="dialogButtonColor">@color/dialog_button_purple</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Red" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_red_500</item>
+-        <item name="colorPrimaryDark">@color/material_red_700</item>
+-        <item name="colorAccent">@color/material_red_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_red</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Teal" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_teal_500</item>
+-        <item name="colorPrimaryDark">@color/material_teal_700</item>
+-        <item name="colorAccent">@color/material_teal_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_teal</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Yellow" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/material_yellow_500</item>
+-        <item name="colorPrimaryDark">@color/material_yellow_700</item>
+-        <item name="colorAccent">@color/material_yellow_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_yellow</item>
+-        <item name="colorOnPrimarySurface">@color/black</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Amber" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_amber_500</item>
+-        <item name="colorPrimaryDark">@color/material_amber_700</item>
+-        <item name="colorAccent">@color/material_amber_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_amber</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Blue" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_blue_500</item>
+-        <item name="colorPrimaryDark">@color/material_blue_700</item>
+-        <item name="colorAccent">@color/material_blue_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_blue</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.BlueGrey" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_blue_grey_500</item>
+-        <item name="colorPrimaryDark">@color/material_blue_grey_700</item>
+-        <item name="colorAccent">@color/material_blue_grey_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_blue_grey</item>
+-        <item name="dialogButtonColor">@color/dialog_button_blue_grey</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Brown" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_brown_500</item>
+-        <item name="colorPrimaryDark">@color/material_brown_700</item>
+-        <item name="colorAccent">@color/material_brown_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_brown</item>
+-        <item name="dialogButtonColor">@color/dialog_button_brown</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Cyan" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_cyan_500</item>
+-        <item name="colorPrimaryDark">@color/material_cyan_700</item>
+-        <item name="colorAccent">@color/material_cyan_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_cyan</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.DeepOrange" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_deep_orange_500</item>
+-        <item name="colorPrimaryDark">@color/material_deep_orange_700</item>
+-        <item name="colorAccent">@color/material_deep_orange_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_deep_orange</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.DeepPurple" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_deep_purple_500</item>
+-        <item name="colorPrimaryDark">@color/material_deep_purple_700</item>
+-        <item name="colorAccent">@color/material_deep_purple_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_deep_purple</item>
+-        <item name="dialogButtonColor">@color/dialog_button_deep_purple</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Green" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_green_500</item>
+-        <item name="colorPrimaryDark">@color/material_green_700</item>
+-        <item name="colorAccent">@color/material_green_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_green</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Grey" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_grey_500</item>
+-        <item name="colorPrimaryDark">@color/material_grey_700</item>
+-        <item name="colorAccent">@color/material_grey_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_grey</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Indigo" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_indigo_500</item>
+-        <item name="colorPrimaryDark">@color/material_indigo_700</item>
+-        <item name="colorAccent">@color/material_indigo_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_indigo</item>
+-        <item name="dialogButtonColor">@color/dialog_button_indigo</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.LightBlue" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_light_blue_500</item>
+-        <item name="colorPrimaryDark">@color/material_light_blue_700</item>
+-        <item name="colorAccent">@color/material_light_blue_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_light_blue</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.LightGreen" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_light_green_500</item>
+-        <item name="colorPrimaryDark">@color/material_light_green_700</item>
+-        <item name="colorAccent">@color/material_light_green_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_light_green</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Lime" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_lime_500</item>
+-        <item name="colorPrimaryDark">@color/material_lime_700</item>
+-        <item name="colorAccent">@color/material_lime_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_lime</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Orange" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_orange_500</item>
+-        <item name="colorPrimaryDark">@color/material_orange_700</item>
+-        <item name="colorAccent">@color/material_orange_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_orange</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Purple" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_purple_500</item>
+-        <item name="colorPrimaryDark">@color/material_purple_700</item>
+-        <item name="colorAccent">@color/material_purple_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_purple</item>
+-        <item name="dialogButtonColor">@color/dialog_button_purple</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Red" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_red_500</item>
+-        <item name="colorPrimaryDark">@color/material_red_700</item>
+-        <item name="colorAccent">@color/material_red_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_red</item>
+-    </style>
+-
+     <style name="Theme.SagerNet.Dialog.Pink_SSR" parent="Theme.SagerNet.Dialog">
+         <item name="colorPrimary">@color/color_pink_ssr</item>
+         <item name="colorPrimaryDark">@color/color_pink_ssr</item>
+@@ -550,136 +301,6 @@
+         <item name="cardElevatedSurfaceColor">@color/card_elevated_pink_ssr</item>
+     </style>
+ 
+-    <style name="Theme.SagerNet.Dialog.Teal" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_teal_500</item>
+-        <item name="colorPrimaryDark">@color/material_teal_700</item>
+-        <item name="colorAccent">@color/material_teal_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_teal</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Yellow" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/material_yellow_500</item>
+-        <item name="colorPrimaryDark">@color/material_yellow_700</item>
+-        <item name="colorAccent">@color/material_yellow_accent_200</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_yellow</item>
+-        <item name="colorOnPrimarySurface">@color/black</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Black" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/color_ng_black_primary</item>
+-        <item name="colorPrimaryDark">@color/color_ng_black_primary</item>
+-        <item name="colorAccent">@color/color_ng_black_accent</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_black</item>
+-
+-        <item name="selectedColorPrimary">@color/color_ng_black_accent</item>
+-        <item name="itemShapeFillColor">@color/color_ng_black_accent</item>
+-
+-        <item name="accentOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextPrimary">?android:textColorPrimary</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.VerdantMint" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/color_verdant_mint</item>
+-        <item name="colorPrimaryDark">@color/color_verdant_mint_dark</item>
+-        <item name="colorAccent">@color/color_verdant_mint_accent</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_verdant_mint</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.Black" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/color_ng_black_primary</item>
+-        <item name="colorPrimaryDark">@color/color_ng_black_primary</item>
+-        <item name="colorAccent">@color/color_ng_black_accent</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_black</item>
+-
+-        <item name="selectedColorPrimary">@color/color_ng_black_accent</item>
+-        <item name="itemShapeFillColor">@color/color_ng_black_accent</item>
+-
+-        <item name="accentOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextPrimary">?android:textColorPrimary</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.VerdantMint" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/color_verdant_mint</item>
+-        <item name="colorPrimaryDark">@color/color_verdant_mint_dark</item>
+-        <item name="colorAccent">@color/color_verdant_mint_accent</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_verdant_mint</item>
+-    </style>
+-
+-    <!-- White theme night fallback: background and app bar as in Black, drawer selection darker than #9E9E9E -->
+-    <style name="Theme.SagerNet.White.Night" parent="Theme.SagerNet.Black">
+-        <item name="colorAccent">@color/color_white_night_accent</item>
+-        <item name="selectedColorPrimary">@color/color_white_night_accent</item>
+-        <item name="itemShapeFillColor">@color/color_white_night_accent</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.White" parent="Theme.SagerNet">
+-        <item name="colorPrimary">@color/color_white_theme</item>
+-        <item name="colorPrimaryDark">@color/color_white_theme_dark</item>
+-        <item name="colorAccent">@color/color_white_theme_accent</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_white</item>
+-
+-        <!-- Dark text and icons on white -->
+-        <item name="actionBarTheme">@style/ThemeOverlay.MaterialComponents.ActionBar</item>
+-        <item name="tabTextColor">#99000000</item>
+-        <item name="tabSelectedTextColor">@color/black</item>
+-        <item name="tabIndicatorColor">@color/black</item>
+-        <item name="tabRippleColor">@color/black</item>
+-        <item name="whiteOrTextPrimary">@color/black</item>
+-
+-        <!-- With a white colorPrimary, content on the primary colour and tints fall back to dark -->
+-        <item name="colorOnPrimary">@color/black</item>
+-        <item name="selectedColorPrimary">@color/black</item>
+-        <item name="itemShapeFillColor">@color/color_white_theme_nav_fill</item>
+-        <item name="accentOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextPrimary">?android:textColorPrimary</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.White.Night" parent="Theme.SagerNet.Dialog.Black">
+-        <item name="colorAccent">@color/color_white_night_accent</item>
+-        <item name="selectedColorPrimary">@color/color_white_night_accent</item>
+-        <item name="itemShapeFillColor">@color/color_white_night_accent</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Dialog.White" parent="Theme.SagerNet.Dialog">
+-        <item name="colorPrimary">@color/color_white_theme</item>
+-        <item name="colorPrimaryDark">@color/color_white_theme_dark</item>
+-        <item name="colorAccent">@color/color_white_theme_accent</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_white</item>
+-        <item name="whiteOrTextPrimary">@color/black</item>
+-
+-        <item name="colorOnPrimary">@color/black</item>
+-        <item name="selectedColorPrimary">@color/black</item>
+-        <item name="itemShapeFillColor">@color/color_white_theme_nav_fill</item>
+-        <item name="accentOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextSecondary">?android:textColorSecondary</item>
+-        <item name="primaryOrTextPrimary">?android:textColorPrimary</item>
+-    </style>
+-
+-    <!-- AMOLED black overlay: applied at night by Theme.apply/applyDialog; only background, surface and card colours.
+-         parent="" cuts the implicit dotted-name inheritance (Theme.SagerNet would be layered on and lock the colours) -->
+-    <style name="Theme.SagerNet.Amoled" parent="">
+-        <item name="android:windowBackground">@android:color/black</item>
+-        <item name="android:colorBackground">@android:color/black</item>
+-        <item name="colorSurface">@android:color/black</item>
+-        <item name="cardElevatedSurfaceColor">@color/card_elevated_amoled</item>
+-        <item name="profileCardStrokeColor">@color/card_stroke</item>
+-        <!-- No elevation overlay on OLED black: it would lighten black surfaces by elevation (a 4dp toolbar becomes #181818) -->
+-        <item name="elevationOverlayEnabled">false</item>
+-    </style>
+-
+-    <!-- White theme night fallback + OLED: White.Night with the app bar (colorPrimary) darkened to black -->
+-    <style name="Theme.SagerNet.Amoled.White" parent="">
+-        <item name="colorPrimary">@android:color/black</item>
+-        <item name="colorPrimaryDark">@android:color/black</item>
+-    </style>
+-
+-    <style name="Theme.SagerNet.Monet" parent="Theme.SagerNet" />
+-
+-    <style name="Theme.SagerNet.Dialog.Monet" parent="Theme.SagerNet.Dialog" />
+-
+     <style name="Theme.Start" parent="Theme.MaterialComponents.DayNight">
+         <item name="android:navigationBarColor">@android:color/transparent</item>
+         <item name="colorPrimary">@android:color/transparent</item>
 diff --git a/app/src/main/res/values/tproxy.xml b/app/src/main/res/values/tproxy.xml
 new file mode 100644
 index 0000000..487816d
@@ -10771,10 +12763,28 @@ index 869c206..0000000
 -    android:updatePeriodMillis="0"
 -    android:widgetCategory="home_screen" />
 diff --git a/app/src/main/res/xml/global_preferences.xml b/app/src/main/res/xml/global_preferences.xml
-index f7e7747..e0f0b4e 100644
+index f7e7747..bcf0441 100644
 --- a/app/src/main/res/xml/global_preferences.xml
 +++ b/app/src/main/res/xml/global_preferences.xml
-@@ -24,12 +24,6 @@
+@@ -6,48 +6,12 @@
+         app:key="settingsGeneral"
+         app:summary="@string/settings_general_sum"
+         app:title="@string/settings_general" />
+-    <Preference
+-        app:fragment="io.nekohasekai.sagernet.ui.settings.AppearanceSettingsFragment"
+-        app:icon="@drawable/ic_baseline_color_lens_24"
+-        app:key="settingsAppearance"
+-        app:summary="@string/settings_appearance_sum"
+-        app:title="@string/settings_appearance" />
+-    <Preference
+-        app:fragment="io.nekohasekai.sagernet.ui.settings.InboundSettingsFragment"
+-        app:icon="@drawable/ic_baseline_input_24"
+-        app:key="settingsInbound"
+-        app:summary="@string/settings_inbound_sum"
+-        app:title="@string/settings_inbound" />
+     <Preference
+         app:fragment="io.nekohasekai.sagernet.ui.settings.TunSettingsFragment"
+         app:icon="@drawable/ic_baseline_vpn_key_24"
          app:key="settingsTun"
          app:summary="@string/settings_tun_sum"
          app:title="@string/settings_tun" />
@@ -10784,13 +12794,18 @@ index f7e7747..e0f0b4e 100644
 -        app:key="settingsRouting"
 -        app:summary="@string/settings_routing_sum"
 -        app:title="@string/settings_routing" />
-     <Preference
-         app:fragment="io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment"
-         app:icon="@drawable/ic_action_dns"
-@@ -42,12 +36,6 @@
-         app:key="settingsPresets"
-         app:summary="@string/settings_presets_sum"
-         app:title="@string/settings_presets" />
+-    <Preference
+-        app:fragment="io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment"
+-        app:icon="@drawable/ic_action_dns"
+-        app:key="settingsDns"
+-        app:summary="@string/settings_dns_sum"
+-        app:title="@string/settings_dns" />
+-    <Preference
+-        app:fragment="io.nekohasekai.sagernet.ui.settings.PresetSettingsFragment"
+-        app:icon="@drawable/ic_baseline_tune_24"
+-        app:key="settingsPresets"
+-        app:summary="@string/settings_presets_sum"
+-        app:title="@string/settings_presets" />
 -    <Preference
 -        app:fragment="io.nekohasekai.sagernet.ui.settings.TestingSettingsFragment"
 -        app:icon="@drawable/ic_baseline_speed_24"
@@ -10800,7 +12815,7 @@ index f7e7747..e0f0b4e 100644
      <Preference
          app:fragment="io.nekohasekai.sagernet.ui.settings.SubscriptionSettingsFragment"
          app:icon="@drawable/ic_baseline_update_24"
-@@ -71,11 +59,4 @@
+@@ -71,11 +35,4 @@
          app:key="settingsBackup"
          app:summary="@string/settings_backup_sum"
          app:title="@string/settings_backup" />
@@ -10812,6 +12827,97 @@ index f7e7747..e0f0b4e 100644
 -            app:title="@string/reset_settings" />
 -    </PreferenceCategory>
  </PreferenceScreen>
+diff --git a/app/src/main/res/xml/settings_appearance.xml b/app/src/main/res/xml/settings_appearance.xml
+deleted file mode 100644
+index b8f2a0e..0000000
+--- a/app/src/main/res/xml/settings_appearance.xml
++++ /dev/null
+@@ -1,85 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+-    xmlns:app="http://schemas.android.com/apk/res-auto">
+-    <PreferenceCategory app:title="@string/theme">
+-        <SwitchPreference
+-            app:defaultValue="false"
+-            app:icon="@drawable/ic_baseline_color_lens_24"
+-            app:key="useSystemTheme"
+-            app:summary="@string/use_system_theme_summary"
+-            app:title="@string/use_system_theme" />
+-        <moe.matsuri.nb4a.ui.ColorPickerPreference
+-            android:title="@string/theme"
+-            app:icon="@drawable/ic_baseline_color_lens_24"
+-            app:key="appTheme" />
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:defaultValue="0"
+-            app:entries="@array/night_mode"
+-            app:entryValues="@array/int_array_4"
+-            app:icon="@drawable/ic_baseline_wb_sunny_24"
+-            app:key="nightTheme"
+-            app:title="@string/night_mode"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:defaultValue="false"
+-            app:icon="@drawable/ic_baseline_contrast_24"
+-            app:key="amoledTheme"
+-            app:summary="@string/amoled_theme_summary"
+-            app:title="@string/amoled_theme" />
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:defaultValue=""
+-            app:entries="@array/language_entries"
+-            app:entryValues="@array/language_values"
+-            app:icon="@drawable/baseline_translate_24"
+-            app:key="appLanguage"
+-            app:title="@string/language"
+-            app:useSimpleSummaryProvider="true" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_profile_list">
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_center_focus_weak_24"
+-            app:key="alwaysShowAddress"
+-            app:summary="@string/always_show_address_sum"
+-            app:title="@string/always_show_address" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_format_align_left_24"
+-            app:key="compactProfileRows"
+-            app:summary="@string/compact_profile_rows_sum"
+-            app:title="@string/compact_profile_rows" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_view_list_24"
+-            app:key="compactGroupCards"
+-            app:summary="@string/compact_group_cards_sum"
+-            app:title="@string/compact_group_cards" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_security_24"
+-            app:key="show_config_security"
+-            app:summary="@string/show_config_security_sum"
+-            app:title="@string/show_config_security" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_notification">
+-        <SwitchPreference
+-            app:defaultValue="true"
+-            app:icon="@drawable/ic_baseline_speed_24"
+-            app:key="showDirectSpeed"
+-            app:summary="@string/show_direct_speed_sum"
+-            app:title="@string/show_direct_speed" />
+-        <SwitchPreference
+-            app:key="showGroupInNotification"
+-            app:title="@string/show_group_in_notification" />
+-        <MultiSelectListPreference
+-            app:defaultValue="@array/notification_action_defaults"
+-            app:entries="@array/notification_action_entries"
+-            app:entryValues="@array/notification_action_values"
+-            app:icon="@drawable/ic_baseline_compare_arrows_24"
+-            app:key="notificationActions"
+-            app:title="@string/notification_actions" />
+-        <Preference
+-            app:icon="@drawable/ic_baseline_info_24"
+-            app:key="notificationPermission"
+-            app:persistent="false"
+-            app:title="@string/notification_permission" />
+-    </PreferenceCategory>
+-</PreferenceScreen>
 diff --git a/app/src/main/res/xml/settings_core.xml b/app/src/main/res/xml/settings_core.xml
 index 823eee5..fefaf36 100644
 --- a/app/src/main/res/xml/settings_core.xml
@@ -10839,6 +12945,392 @@ index 823eee5..fefaf36 100644
              app:key="core_box_api_secret"
              app:title="@string/clash_api_secret" />
      </PreferenceCategory>
+diff --git a/app/src/main/res/xml/settings_dns.xml b/app/src/main/res/xml/settings_dns.xml
+deleted file mode 100644
+index 2bb0d66..0000000
+--- a/app/src/main/res/xml/settings_dns.xml
++++ /dev/null
+@@ -1,94 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+-    <Preference
+-        app:icon="@drawable/ic_baseline_info_24"
+-        app:isPreferenceVisible="false"
+-        app:key="dnsRouteOverride"
+-        app:persistent="false"
+-        app:selectable="false" />
+-    <PreferenceCategory
+-        app:key="dnsServers"
+-        app:title="@string/cag_dns_servers">
+-        <io.nekohasekai.sagernet.ui.settings.DnsServerPreference
+-            app:dialogMessage="@string/dns_address_dialog_message"
+-            app:icon="@drawable/ic_action_dns"
+-            app:key="remote_dns"
+-            app:title="@string/remote_dns"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:key="remote_dns_disable_ipv6"
+-            app:summary="@string/dns_disable_ipv6_sum"
+-            app:title="@string/remote_dns_disable_ipv6" />
+-        <io.nekohasekai.sagernet.ui.settings.DnsServerPreference
+-            app:dialogMessage="@string/dns_address_dialog_message"
+-            app:icon="@drawable/ic_action_dns"
+-            app:key="direct_dns"
+-            app:title="@string/direct_dns"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:key="direct_dns_disable_ipv6"
+-            app:summary="@string/dns_disable_ipv6_sum"
+-            app:title="@string/direct_dns_disable_ipv6" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/underlying_dns_sum"
+-            app:key="core_box_underlying_dns"
+-            app:title="@string/underlying_dns"
+-            app:useSimpleSummaryProvider="true" />
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:entries="@array/dns_final_out_entries"
+-            app:entryValues="@array/dns_final_out_values"
+-            app:key="dns_final_out"
+-            app:title="@string/dns_final_out"
+-            app:useSimpleSummaryProvider="true" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory
+-        app:key="dnsBehaviour"
+-        app:title="@string/cag_behaviour">
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_camera_24"
+-            app:key="enable_dns_routing"
+-            app:summary="@string/dns_routing_message"
+-            app:title="@string/enable_dns_routing" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_action_lock"
+-            app:key="fakedns"
+-            app:summary="@string/fakedns_message"
+-            app:title="@string/enable_fakedns" />
+-        <SwitchPreference
+-            app:key="fakeip_disable_ipv6"
+-            app:summary="@string/fakeip_disable_ipv6_sum"
+-            app:title="@string/fakeip_disable_ipv6" />
+-        <SwitchPreference
+-            app:key="dns_use_hosts"
+-            app:summary="@string/dns_use_hosts_sum"
+-            app:title="@string/dns_use_hosts" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_transform_24"
+-            app:key="dns_predefined_enable"
+-            app:title="@string/dns_predefined_enable" />
+-        <io.nekohasekai.sagernet.ui.settings.StringListPreference
+-            app:dialogMessage="@string/dns_predefined_rules_dialog_message"
+-            app:key="dns_predefined_rules"
+-            app:title="@string/dns_predefined_rules" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_advanced">
+-        <Preference
+-            app:fragment="io.nekohasekai.sagernet.ui.settings.DnsAdvancedSettingsFragment"
+-            app:icon="@drawable/ic_baseline_tune_24"
+-            app:key="dnsAdvanced"
+-            app:summary="@string/dns_advanced_sum"
+-            app:title="@string/dns_advanced" />
+-        <SwitchPreference
+-            app:key="use_dns_object"
+-            app:summary="@string/use_dns_object_sum"
+-            app:title="@string/use_dns_object" />
+-        <moe.matsuri.nb4a.ui.EditConfigPreference
+-            app:icon="@drawable/ic_baseline_layers_24"
+-            app:jsonAllowEmpty="true"
+-            app:jsonSchema="#/$defs/DNS"
+-            app:key="dns_object"
+-            app:title="@string/dns_object" />
+-    </PreferenceCategory>
+-</PreferenceScreen>
+diff --git a/app/src/main/res/xml/settings_dns_advanced.xml b/app/src/main/res/xml/settings_dns_advanced.xml
+deleted file mode 100644
+index 579b254..0000000
+--- a/app/src/main/res/xml/settings_dns_advanced.xml
++++ /dev/null
+@@ -1,37 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+-    <PreferenceCategory app:title="@string/cag_cache">
+-        <EditTextPreference
+-            app:key="dns_cache_capacity"
+-            app:title="@string/dns_cache_capacity"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:key="dns_disable_cache"
+-            app:title="@string/dns_disable_cache" />
+-        <SwitchPreference
+-            app:key="dns_disable_expire"
+-            app:title="@string/dns_disable_expire" />
+-        <SwitchPreference
+-            app:key="dns_optimistic"
+-            app:summary="@string/dns_optimistic_sum"
+-            app:title="@string/dns_optimistic" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/duration_dialog_message"
+-            app:key="dns_optimistic_timeout"
+-            app:title="@string/dns_optimistic_timeout" />
+-        <SwitchPreference
+-            app:key="dns_persist_cache"
+-            app:summary="@string/dns_persist_cache_sum"
+-            app:title="@string/dns_persist_cache" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_advanced">
+-        <EditTextPreference
+-            app:dialogMessage="@string/duration_dialog_message"
+-            app:key="dns_query_timeout"
+-            app:title="@string/dns_query_timeout" />
+-        <SwitchPreference
+-            app:key="dns_reverse_mapping"
+-            app:title="@string/dns_reverse_mapping" />
+-    </PreferenceCategory>
+-</PreferenceScreen>
+diff --git a/app/src/main/res/xml/settings_inbound.xml b/app/src/main/res/xml/settings_inbound.xml
+deleted file mode 100644
+index 4a7dad9..0000000
+--- a/app/src/main/res/xml/settings_inbound.xml
++++ /dev/null
+@@ -1,65 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+-    <PreferenceCategory app:title="@string/cag_mixed_inbound">
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_block_24"
+-            app:key="disable_mixed_inbound"
+-            app:summary="@string/disable_mixed_inbound_sum"
+-            app:title="@string/disable_mixed_inbound" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_maps_directions_boat"
+-            app:key="inbound_socks_port"
+-            app:title="@string/port_proxy"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:key="random_inbound_port"
+-            app:summary="@string/random_inbound_port_sum"
+-            app:title="@string/random_inbound_port" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_nat_24"
+-            app:key="inboundAllowLan"
+-            app:persistent="false"
+-            app:summary="@string/allow_access_sum"
+-            app:title="@string/allow_access" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_http_24"
+-            app:key="appendHttpProxy"
+-            app:summary="@string/append_http_proxy_sum"
+-            app:title="@string/append_http_proxy" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/http_proxy_bypass_dialog_message"
+-            app:icon="@drawable/ic_baseline_domain_24"
+-            app:key="httpProxyBypass"
+-            app:title="@string/http_proxy_bypass" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_authentication">
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_lock_24"
+-            app:key="inbound_auth"
+-            app:summary="@string/inbound_auth_sum"
+-            app:title="@string/inbound_auth" />
+-        <EditTextPreference
+-            app:key="inbound_user"
+-            app:title="@string/username"
+-            app:useSimpleSummaryProvider="true" />
+-        <EditTextPreference
+-            app:key="inbound_pass"
+-            app:title="@string/password" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_advanced">
+-        <EditTextPreference
+-            app:dialogMessage="@string/dns_in_port_dialog_message"
+-            app:icon="@drawable/ic_action_dns"
+-            app:key="core_dns_in_port"
+-            app:title="@string/dns_in_port"
+-            app:useSimpleSummaryProvider="true" />
+-        <moe.matsuri.nb4a.ui.EditConfigPreference
+-            app:icon="@drawable/ic_baseline_layers_24"
+-            app:jsonAllowEmpty="true"
+-            app:jsonSchema="#"
+-            app:key="custom_inbound"
+-            app:title="@string/custom_inbound" />
+-    </PreferenceCategory>
+-</PreferenceScreen>
+diff --git a/app/src/main/res/xml/settings_presets.xml b/app/src/main/res/xml/settings_presets.xml
+deleted file mode 100644
+index 7cf166d..0000000
+--- a/app/src/main/res/xml/settings_presets.xml
++++ /dev/null
+@@ -1,166 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+-    <PreferenceCategory app:title="@string/cag_mux_sing_box">
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:entries="@array/mux_protocol_preset"
+-            app:entryValues="@array/mux_protocol_preset"
+-            app:icon="@drawable/ic_baseline_layers_24"
+-            app:key="mux_protocol"
+-            app:title="@string/mux_type"
+-            app:useSimpleSummaryProvider="true" />
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:entries="@array/mux_mode_entry"
+-            app:entryValues="@array/mux_mode_value"
+-            app:icon="@drawable/ic_baseline_tune_24"
+-            app:key="mux_mode"
+-            app:title="@string/mux_mode" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="mux_concurrency"
+-            app:title="@string/mux_concurrency"
+-            app:useSimpleSummaryProvider="true" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="mux_max_connections"
+-            app:title="@string/mux_max_connections"
+-            app:useSimpleSummaryProvider="true" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="mux_min_streams"
+-            app:title="@string/mux_min_streams"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:icon="@drawable/baseline_developer_board_24"
+-            app:key="mux_padding"
+-            app:title="@string/padding" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_speed_24"
+-            app:key="mux_brutal"
+-            app:summary="@string/mux_brutal_sum"
+-            app:title="@string/mux_brutal" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_upload_24"
+-            app:key="mux_brutal_up_mbps"
+-            app:title="@string/mux_brutal_up_mbps"
+-            app:useSimpleSummaryProvider="true" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_download_24"
+-            app:key="mux_brutal_down_mbps"
+-            app:title="@string/mux_brutal_down_mbps"
+-            app:useSimpleSummaryProvider="true" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_compare_arrows_24"
+-            app:key="mux_default_on"
+-            app:summary="@string/preset_mux_default_on_sum"
+-            app:title="@string/preset_default_on" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_mux_xray">
+-        <EditTextPreference
+-            app:dialogMessage="@string/xray_mux_concurrency_hint"
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="xray_mux_concurrency"
+-            app:title="@string/preset_concurrency"
+-            app:useSimpleSummaryProvider="true" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/xray_mux_max_connections_hint"
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="xray_mux_max_connections"
+-            app:title="@string/mux_max_connections" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/xray_mux_xudp_concurrency_hint"
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="xray_mux_xudp_concurrency"
+-            app:title="@string/xray_mux_xudp_concurrency"
+-            app:useSimpleSummaryProvider="true" />
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:entries="@array/xray_mux_udp443_entry"
+-            app:entryValues="@array/xray_mux_udp443_value"
+-            app:icon="@drawable/ic_baseline_block_24"
+-            app:key="xray_mux_xudp_proxy_udp443"
+-            app:title="@string/xray_mux_xudp_proxy_udp443" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_compare_arrows_24"
+-            app:key="xray_mux_default_on"
+-            app:summary="@string/preset_xray_mux_default_on_sum"
+-            app:title="@string/preset_default_on" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/tls_fragment">
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:entries="@array/fragment_implementation_entries"
+-            app:entryValues="@array/fragment_implementation_values"
+-            app:icon="@drawable/ic_baseline_layers_24"
+-            app:key="fragment_implementation"
+-            app:title="@string/fragment_implementation" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/preset_fragment_size_message"
+-            app:icon="@drawable/ic_baseline_texture_24"
+-            app:key="fragment_size"
+-            app:title="@string/fragment_size" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/preset_fragment_sleep_message"
+-            app:icon="@drawable/ic_baseline_timelapse_24"
+-            app:key="fragment_sleep"
+-            app:title="@string/fragment_sleep" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_shuffle_24"
+-            app:key="fragment_default_on"
+-            app:summary="@string/preset_fragment_default_on_sum"
+-            app:title="@string/preset_default_on" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/tls_tricks">
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_tune_24"
+-            app:key="tls_tricks_default_on"
+-            app:summary="@string/preset_tls_tricks_default_on_sum"
+-            app:title="@string/preset_default_on" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory app:title="@string/cag_utls">
+-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+-            app:entries="@array/utls_fingerprint_preset_entries"
+-            app:entryValues="@array/utls_fingerprint_entry"
+-            app:icon="@drawable/ic_baseline_fingerprint_24"
+-            app:key="utlsFingerprint"
+-            app:title="@string/utls_fingerprint"
+-            app:useSimpleSummaryProvider="true" />
+-    </PreferenceCategory>
+-
+-    <PreferenceCategory
+-        app:summary="@string/preset_h2_quic_note"
+-        app:title="@string/cag_h2_quic">
+-        <EditTextPreference
+-            app:dialogMessage="@string/duration_dialog_message"
+-            app:icon="@drawable/ic_baseline_timelapse_24"
+-            app:key="h2_idle_timeout"
+-            app:title="@string/quic_idle_timeout" />
+-        <EditTextPreference
+-            app:dialogMessage="@string/duration_dialog_message"
+-            app:icon="@drawable/ic_baseline_timelapse_24"
+-            app:key="h2_keep_alive_period"
+-            app:title="@string/quic_keep_alive_period" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_texture_24"
+-            app:key="h2_stream_receive_window"
+-            app:title="@string/hysteria_stream_receive_window" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_transform_24"
+-            app:key="h2_connection_receive_window"
+-            app:title="@string/hysteria_connection_receive_window" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_low_priority_24"
+-            app:key="h2_max_concurrent_streams"
+-            app:title="@string/quic_max_concurrent_streams" />
+-        <EditTextPreference
+-            app:icon="@drawable/ic_baseline_tune_24"
+-            app:key="quic_initial_packet_size"
+-            app:title="@string/quic_initial_packet_size" />
+-        <SwitchPreference
+-            app:icon="@drawable/ic_baseline_multiple_stop_24"
+-            app:key="quic_disable_path_mtu_discovery"
+-            app:summary="@string/preset_pmtud_default_on_sum"
+-            app:title="@string/hysteria_disable_mtu_discovery" />
+-    </PreferenceCategory>
+-</PreferenceScreen>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
 index 0000000..12edd03
@@ -11099,7 +13591,7 @@ index 0000000..b6f8854
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..561f878 100644
+index 751051e..f6e44c6 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -11107,8 +13599,8 @@ index 751051e..561f878 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.15
-+VERSION_CODE=128
++VERSION_NAME=2.0.7-quality.16
++VERSION_CODE=129
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file
 diff --git a/openspec/specs/app-widgets/spec.md b/openspec/specs/app-widgets/spec.md

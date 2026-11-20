@@ -17,7 +17,8 @@ import android.view.ViewGroup
 import androidx.activity.addCallback
 import androidx.annotation.IdRes
 import androidx.appcompat.widget.PopupMenu
-import androidx.core.content.ContextCompat
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentFactory
 import androidx.core.view.ViewCompat
 import androidx.core.view.updatePaddingRelative
 import androidx.core.view.WindowCompat
@@ -47,7 +48,6 @@ import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.database.SettingsMapper
 import io.nekohasekai.sagernet.outbound.`import`.ProfileImport
 import io.nekohasekai.sagernet.ui.route.RouteImports
-import io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment
 import io.nekohasekai.sagernet.ui.settings.XrayGeoSettingsFragment
 import io.nekohasekai.sagernet.ui.test.TestSessionClient
 import io.nekohasekai.sagernet.ktx.readableMessage
@@ -74,6 +74,11 @@ class MainActivity : ThemedActivity(),
     companion object {
         /** Texts to import (the QR scanner): URLs and deep links one by one, the rest as one import. */
         const val EXTRA_IMPORT_TEXTS = "importTexts"
+
+        private val REMOVED_SETTINGS_SCREENS = arrayOf(
+            "AppearanceSettingsFragment", "InboundSettingsFragment", "DnsSettingsFragment",
+            "DnsAdvancedSettingsFragment", "PresetSettingsFragment",
+        ).mapTo(HashSet()) { "io.nekohasekai.sagernet.ui.settings.$it" }
     }
 
     lateinit var binding: LayoutMainBinding
@@ -81,31 +86,19 @@ class MainActivity : ThemedActivity(),
     private var currentMainFragment: ToolbarFragment? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Android can restore a settings screen that was open before this upgrade.
+        supportFragmentManager.fragmentFactory = object : FragmentFactory() {
+            override fun instantiate(classLoader: ClassLoader, className: String): Fragment =
+                if (className in REMOVED_SETTINGS_SCREENS) SettingsPreferenceFragment()
+                else super.instantiate(classLoader, className)
+        }
         super.onCreate(savedInstanceState)
         MessageStore.setCurrentActivity(this)
         val animateInitialControls = savedInstanceState == null
 
         binding = LayoutMainBinding.inflate(layoutInflater)
         binding.fab.initProgress(binding.fabProgress)
-        // White theme: a dark FAB with a light icon (white on white is unreadable)
-        if (Theme.isWhiteTheme()) {
-            binding.fab.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                ContextCompat.getColor(this, R.color.color_white_theme_fab)
-            )
-        }
-        if (themeResId !in intArrayOf(
-                R.style.Theme_SagerNet_Black,
-                // The White theme and its night fallback read ?itemShapeFillColor too, so the selection stays visible
-                R.style.Theme_SagerNet_White,
-                R.style.Theme_SagerNet_White_Night
-            )
-        ) {
-            navigation = binding.navView
-            binding.drawerLayout.removeView(binding.navViewBlack)
-        } else {
-            navigation = binding.navViewBlack
-            binding.drawerLayout.removeView(binding.navView)
-        }
+        navigation = binding.navView
         navigation.setNavigationItemSelectedListener(this)
         // NavigationView pads its header and menu itself (top/bottom); its side follows side bars and cutouts.
         ViewCompat.setOnApplyWindowInsetsListener(binding.drawerLayout) { _, insets ->
@@ -436,11 +429,7 @@ class MainActivity : ThemedActivity(),
         if (errorBar?.isShownOrQueued == true && errorShown == message) return
         errorShown = message
         val bar = snackbar(message).setDuration(Snackbar.LENGTH_INDEFINITE)
-        if (DataStore.serviceErrorDns) {
-            bar.setAction(R.string.settings_dns) {
-                openSettingsScreen(DnsSettingsFragment::class.java.name, getString(R.string.settings_dns))
-            }
-        } else if (DataStore.serviceErrorGeo) {
+        if (DataStore.serviceErrorGeo) {
             bar.setAction(R.string.xray_geo_assets_action) {
                 openSettingsScreen(XrayGeoSettingsFragment::class.java.name, getString(R.string.xray_geo_assets))
             }
@@ -453,7 +442,6 @@ class MainActivity : ThemedActivity(),
             override fun onDismissed(transientBottomBar: Snackbar, event: Int) {
                 if (event == DISMISS_EVENT_SWIPE || event == DISMISS_EVENT_ACTION) {
                     DataStore.serviceError = ""
-                    DataStore.serviceErrorDns = false
                     DataStore.serviceErrorGeo = false
                     DataStore.serviceErrorRuleSets = false
                 }

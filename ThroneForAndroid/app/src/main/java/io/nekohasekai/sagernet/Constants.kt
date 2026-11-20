@@ -6,11 +6,6 @@ object Key {
 
     // Android-only keys of the configuration store; the desktop keys are in database.SettingsRegistry.
 
-    const val APP_THEME = "appTheme"
-    const val USE_SYSTEM_THEME = "useSystemTheme"
-    const val NIGHT_THEME = "nightTheme"
-    const val AMOLED_THEME = "amoledTheme"
-    const val APP_LANGUAGE = "appLanguage"
     const val SERVICE_MODE = "serviceMode"
     const val MODE_VPN = "vpn"
     const val MODE_PROXY = "proxy"
@@ -67,7 +62,6 @@ object Key {
     const val HWID_FALLBACK = "hwidFallback"
     const val WIFI_PERMISSION_ASKED = "wifiPermissionAsked"
     const val SERVICE_ERROR = "serviceError"
-    const val SERVICE_ERROR_DNS = "serviceErrorDns"
     const val SERVICE_ERROR_GEO = "serviceErrorGeo"
     const val SERVICE_ERROR_RULE_SETS = "serviceErrorRuleSets"
     const val START_WITHOUT_RULE_SETS = "startWithoutRuleSets"

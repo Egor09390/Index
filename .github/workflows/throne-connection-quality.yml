@@ -14,6 +14,7 @@ permissions:
   contents: write
 
 env:
+  THRONE_RELEASE_PACKAGE: com.nb4a.throne.quality.debug
   THRONE_RELEASE_SIGNER: 16ae8140f4e64e5cd4819a0c06365a55e938e2f1a396ea7fab71efed2cd8e6dd
 
 jobs:
@@ -48,6 +49,7 @@ jobs:
           fi
 
       - name: Check Throne release signing key
+        id: signing
         if: steps.release.outputs.status != 'published'
         env:
           SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
@@ -55,7 +57,10 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          : "${SIGNING_KEYSTORE_B64:?Set the SIGNING_KEYSTORE_B64 Actions secret to the Throne Fork Release keystore}"
+          if [ -z "$SIGNING_KEYSTORE_B64" ]; then
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           : "${SIGNING_STORE_PASSWORD:?Set the SIGNING_STORE_PASSWORD Actions secret}"
           : "${SIGNING_KEY_ALIAS:?Set the SIGNING_KEY_ALIAS Actions secret}"
 
@@ -68,6 +73,7 @@ jobs:
             echo '::error::The configured keystore does not match the certificate of the published Throne Fork Release APK.'
             exit 1
           fi
+          echo 'configured=true' >> "$GITHUB_OUTPUT"
 
       - name: Apply modifications to Throne v2.0.7
         if: steps.release.outputs.status != 'published'
@@ -78,8 +84,10 @@ jobs:
           git switch --detach FETCH_HEAD
           git apply --check "$RUNNER_TEMP/throne.patch"
           git apply "$RUNNER_TEMP/throne.patch"
+          # The previous signed builds use the existing .debug application ID.
+          sed -i "s/^PACKAGE_NAME=.*/PACKAGE_NAME=$THRONE_RELEASE_PACKAGE/" nb4a.properties
 
-      - name: Test and build signed release APKs
+      - name: Test and build release APKs
         if: steps.release.outputs.status != 'published'
         uses: ./.github/actions/android-build
         env:
@@ -91,10 +99,19 @@ jobs:
           tasks: app:testOssDebugUnitTest app:assembleOssRelease
           channel: stable
           build-number: '999'
-          sign: 'true'
+          sign: ${{ steps.signing.outputs.configured }}
+
+      - name: Upload ARM64 APK for local signing
+        if: steps.signing.outputs.configured == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: throne-arm64-for-signing
+          path: app/build/outputs/apk/oss/release/*arm64-v8a*unsigned.apk
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Publish signed release as Latest
-        if: steps.release.outputs.status != 'published'
+        if: steps.signing.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -104,8 +121,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 buildScript/release_assets.py app/build/outputs/apk/oss/release dist stable
-          jq -e --arg signer "$THRONE_RELEASE_SIGNER" --arg version "$VERSION" \
-            '.signerSha256 == $signer and .versionName == $version' dist/throne-update.json >/dev/null
+          jq -e --arg signer "$THRONE_RELEASE_SIGNER" --arg version "$VERSION" --arg package "$THRONE_RELEASE_PACKAGE" \
+            '.signerSha256 == $signer and .versionName == $version and .packageName == $package' dist/throne-update.json >/dev/null
           bash buildScript/release_notes.sh "$VERSION" > "$RUNNER_TEMP/release.md"
 
           if [ "$STATUS" = existing ]; then

@@ -41,7 +41,6 @@ abstract class ThemedActivity : AppCompatActivity {
         } else {
             Theme.applyDialog(this)
         }
-        Theme.applyNightTheme()
         if (!isDialog) enableEdgeToEdge(statusBarStyle(), navigationBarStyle())
 
         super.onCreate(savedInstanceState)

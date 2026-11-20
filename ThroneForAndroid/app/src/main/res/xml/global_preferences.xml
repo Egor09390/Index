@@ -7,35 +7,11 @@
         app:summary="@string/settings_general_sum"
         app:title="@string/settings_general" />
     <Preference
-        app:fragment="io.nekohasekai.sagernet.ui.settings.AppearanceSettingsFragment"
-        app:icon="@drawable/ic_baseline_color_lens_24"
-        app:key="settingsAppearance"
-        app:summary="@string/settings_appearance_sum"
-        app:title="@string/settings_appearance" />
-    <Preference
-        app:fragment="io.nekohasekai.sagernet.ui.settings.InboundSettingsFragment"
-        app:icon="@drawable/ic_baseline_input_24"
-        app:key="settingsInbound"
-        app:summary="@string/settings_inbound_sum"
-        app:title="@string/settings_inbound" />
-    <Preference
         app:fragment="io.nekohasekai.sagernet.ui.settings.TunSettingsFragment"
         app:icon="@drawable/ic_baseline_vpn_key_24"
         app:key="settingsTun"
         app:summary="@string/settings_tun_sum"
         app:title="@string/settings_tun" />
-    <Preference
-        app:fragment="io.nekohasekai.sagernet.ui.settings.DnsSettingsFragment"
-        app:icon="@drawable/ic_action_dns"
-        app:key="settingsDns"
-        app:summary="@string/settings_dns_sum"
-        app:title="@string/settings_dns" />
-    <Preference
-        app:fragment="io.nekohasekai.sagernet.ui.settings.PresetSettingsFragment"
-        app:icon="@drawable/ic_baseline_tune_24"
-        app:key="settingsPresets"
-        app:summary="@string/settings_presets_sum"
-        app:title="@string/settings_presets" />
     <Preference
         app:fragment="io.nekohasekai.sagernet.ui.settings.SubscriptionSettingsFragment"
         app:icon="@drawable/ic_baseline_update_24"
