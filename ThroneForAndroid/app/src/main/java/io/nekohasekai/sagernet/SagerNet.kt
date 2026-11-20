@@ -34,9 +34,7 @@ import io.nekohasekai.sagernet.update.UpdateManager
 import io.nekohasekai.sagernet.utils.*
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
-import java.io.File
 import moe.matsuri.nb4a.utils.JavaUtil
-import moe.matsuri.nb4a.utils.cleanWebview
 import androidx.work.Configuration as WorkConfiguration
 
 class SagerNet : Application(),
@@ -75,13 +73,7 @@ class SagerNet : Application(),
                 }
             }
 
-            // fix multi process issue in Android 9+
-            JavaUtil.handleWebviewDir(this)
-
-            runOnDefaultDispatcher {
-                PackageCache.register()
-                cleanWebview()
-            }
+            runOnDefaultDispatcher { PackageCache.register() }
         }
 
         if (isMainProcess) {
@@ -96,8 +88,6 @@ class SagerNet : Application(),
 
                 updateNotificationChannels()
             }
-            // The icon pack of the removed custom icon feature; a no-op once it is gone.
-            runOnDefaultDispatcher { File(filesDir, "custom_icon").deleteRecursively() }
             RemoteRouteUpdater.schedule()
             SubscriptionScheduler.schedule()
             Widgets.watchSelection(this)

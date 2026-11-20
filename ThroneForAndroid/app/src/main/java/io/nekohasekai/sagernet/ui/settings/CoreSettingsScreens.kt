@@ -252,7 +252,7 @@ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
 }
 
 /**
- * Logging, statistics, the Clash API, the sing-box API that serves the dashboard, Xray import preference,
+ * Logging, statistics, the Clash API, the sing-box API, Xray import preference,
  * certificate defaults and the NTP client.
  */
 class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
@@ -313,7 +313,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
         )
 
         bindClashApi()
-        bindApiDashboard()
+        bindBoxApi()
         bindNtp()
     }
 
@@ -362,10 +362,10 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
     }
 
     /**
-     * core_box_api_port, sign-encoded like core_box_clash_api; it also shows the dashboard in the drawer. The secret is
+     * core_box_api_port, sign-encoded like core_box_clash_api. The secret is
      * never stored empty (sing-box reads that as no authentication): clearing it makes a new random one.
      */
-    private fun bindApiDashboard() {
+    private fun bindBoxApi() {
         val enabled = pref<SwitchPreference>(KEY_API_ENABLED)
         val port = pref<EditTextPreference>(KEY_API_PORT)
         val secret = pref<EditTextPreference>(SettingsRegistry.CORE_BOX_API_SECRET.key)
@@ -375,7 +375,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
             secret.isEnabled = on
         }
 
-        enabled.isChecked = DataStore.apiDashboardEnabled
+        enabled.isChecked = DataStore.boxApiEnabled
         port.text = portValue().toString()
         port.summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
         port.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
@@ -443,7 +443,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
     private companion object {
         const val KEY_CLASH_ENABLED = "coreClashApiEnabled"
         const val KEY_CLASH_PORT = "coreClashApiPort"
-        const val KEY_API_ENABLED = "coreApiDashboardEnabled"
-        const val KEY_API_PORT = "coreApiDashboardPort"
+        const val KEY_API_ENABLED = "coreBoxApiEnabled"
+        const val KEY_API_PORT = "coreBoxApiPort"
     }
 }

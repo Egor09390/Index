@@ -117,7 +117,7 @@ data class GeneratorSettings(
     val trafficStats: Boolean = true,
     /**
      * core_box_api_port (SettingsRepo.h:298), sign-encoded: > 0 is the loopback port the api service serves the
-     * dashboard on, otherwise the service is only there for the stats. Android defaults to 9091 (on).
+     * API listening, otherwise the service is only there for the stats. Android defaults to 9091 (on).
      */
     val apiPort: Int = -9091,
     /** core_box_api_secret (SettingsRepo.h:299): the api service's secret. */

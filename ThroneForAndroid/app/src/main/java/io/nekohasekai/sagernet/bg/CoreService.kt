@@ -39,8 +39,6 @@ class CoreService : Service() {
 
         override fun importFile(path: String, gid: Long) = SubscriptionQueue.importFile(path, gid)
 
-        override fun groupAction(gid: Long, action: String): String = SubscriptionQueue.groupAction(gid, action)
-
         override fun resolveProfiles(ids: LongArray?): String = SubscriptionQueue.resolveProfiles(ids?.toList().orEmpty())
 
         override fun registerSubscriptionCallback(cb: ISubscriptionCallback) = SubscriptionQueue.register(cb)

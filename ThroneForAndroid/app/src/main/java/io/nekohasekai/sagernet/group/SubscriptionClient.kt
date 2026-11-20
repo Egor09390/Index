@@ -77,18 +77,6 @@ object SubscriptionClient {
         }
     }
 
-    /** Desktop group actions that need the core: "remove_invalid", "resolve_domains"; returns the report text. */
-    suspend fun groupAction(gid: Long, action: String): String = withContext(Dispatchers.IO) {
-        try {
-            val report = CoreServiceClient.call { it.groupAction(gid, action) }.orEmpty()
-            GroupRepo.postReload(gid)
-            report
-        } catch (e: Exception) {
-            Logs.w(e)
-            e.readableMessage
-        }
-    }
-
     /** Resolve Domain for the profiles [ids] of group [gid]; returns the report text. */
     suspend fun resolveProfiles(gid: Long, ids: List<Long>): String = withContext(Dispatchers.IO) {
         try {

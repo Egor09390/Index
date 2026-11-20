@@ -337,23 +337,11 @@ object SettingsRegistry {
     @JvmField val XRAY_LOG_LEVEL = oneOf("xray_log_level", "warning", XRAY_LOG_LEVELS)
     @JvmField val ENABLE_STATS = bool("enable_stats", true)
     @JvmField val DISABLE_TRAFFIC_STATS = bool("disable_traffic_stats", false)
-    /**
-     * The live traffic graph (SettingsRepo.h traffic_graph_*): hidden line keys ("proxy", "direct", the desktop's
-     * "route:<id>" and "aux:<id>"), hidden directions (bit 0 download, bit 1 upload), the 1m/2m/5m/10m window.
-     */
-    @JvmField val TRAFFIC_GRAPH_HIDDEN = stringList("traffic_graph_hidden", emptyList())
-    @JvmField val TRAFFIC_GRAPH_HIDDEN_DIRS = int("traffic_graph_hidden_dirs", 0) { it in 0..3 }
-    @JvmField val TRAFFIC_GRAPH_RANGE = int("traffic_graph_range", 1) { it in 0..3 }
-    @JvmField val TRAFFIC_GRAPH_SMOOTH = bool("traffic_graph_smooth", true)
-    @JvmField val TRAFFIC_GRAPH_MARKERS = bool("traffic_graph_markers", true)
     /** Sign-encoded port: at most 0 is off. */
     @JvmField val CORE_BOX_CLASH_API = int("core_box_clash_api", -9090) { it in -65535..65535 }
     @JvmField val CORE_BOX_CLASH_LISTEN_ADDR = string("core_box_clash_listen_addr", LOOPBACK_ADDRESS) { it.isNotBlank() }
     @JvmField val CORE_BOX_CLASH_API_SECRET = string("core_box_clash_api_secret", "")
-    /**
-     * The sing-box API / dashboard port, sign-encoded like core_box_clash_api (at most 0 is off). Android serves the
-     * dashboard by default, where it stands in for the desktop's stats panels (desktop -9091).
-     */
+    /** The sing-box API port, sign-encoded like core_box_clash_api (at most 0 is off). */
     @JvmField val CORE_BOX_API_PORT = int("core_box_api_port", 9091) { it in -65535..65535 }
     /** Generated on first use when empty (SettingsRepo.cpp:15-19). */
     @JvmField val CORE_BOX_API_SECRET = string("core_box_api_secret", "")

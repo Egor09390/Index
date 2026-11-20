@@ -532,10 +532,6 @@ object ProfileManager {
         GroupSort.repositionLater(profileIds, SortInput.TEST_RESULT)
     }
 
-    fun clearGroupTestResults(groupId: Long) {
-        dao.clearGroupTestResults(groupId)
-    }
-
     // ------------------------------------------------------------------------------------------------ listeners
 
     // postUpdate: post to listeners, don't change the DB

@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.bg.proto
 import io.nekohasekai.sagernet.bg.AbstractInstance
 import io.nekohasekai.sagernet.bg.CoreRuntime
 import io.nekohasekai.sagernet.bg.RunningRouteRules
-import io.nekohasekai.sagernet.bg.SingBoxDashboard
 import io.nekohasekai.sagernet.bg.XrayGeoAssets
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
@@ -50,11 +49,10 @@ abstract class BoxInstance(
     protected open fun buildConfig() {
         // random_inbound_port: a fresh port per start, saved so the app's own requests reach it (mainwindow_setup.cpp:193-196).
         if (DataStore.randomInboundPort) DataStore.inboundSocksPort = mkPort()
-        // The dashboard is on by default, so another app holding its port must not fail the start: it moves, and the
-        // dashboard screen follows the saved port.
-        if (DataStore.apiDashboardEnabled && !isLoopbackPortFree(DataStore.coreBoxApiPort)) {
+        // A busy sing-box API port must not prevent the connection from starting.
+        if (DataStore.boxApiEnabled && !isLoopbackPortFree(DataStore.coreBoxApiPort)) {
             val port = mkPort()
-            Logs.w("sing-box API port ${DataStore.coreBoxApiPort} is in use, the dashboard moves to $port")
+            Logs.w("sing-box API port ${DataStore.coreBoxApiPort} is in use, switching to $port")
             DataStore.coreBoxApiPort = port
         }
         // A custom full config keeps its own rule-sets as written.
@@ -73,8 +71,6 @@ abstract class BoxInstance(
         core = CoreConfig.from(config, listOf(CoreConfig.TAG_PROXY))
         CoreRuntime.applyLogLevel(config.coreConfig)
         ensureXrayAssets()
-        // Before the start: the core downloads the dashboard itself when it finds the dir empty.
-        if (DataStore.apiDashboardEnabled) withContext(Dispatchers.IO) { SingBoxDashboard.install() }
         if (deferRuleSets) {
             // The sets' initial_path; without the file the core falls back to fetching during the start.
             withContext(Dispatchers.IO) {

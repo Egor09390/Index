@@ -89,7 +89,7 @@ object SettingChecks {
         MIXED(R.string.cag_mixed_inbound),
         DNS(R.string.dns_in_port),
         CLASH_API(R.string.cag_clash_api),
-        BOX_API(R.string.cag_api_dashboard),
+        BOX_API(R.string.cag_box_api),
     }
 
     /** The stored port of [listener] while it listens, else null. */

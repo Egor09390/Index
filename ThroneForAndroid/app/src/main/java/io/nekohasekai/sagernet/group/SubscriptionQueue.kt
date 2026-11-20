@@ -37,8 +37,6 @@ object SubscriptionQueue {
     const val STATE_QUEUED = 1
     const val STATE_RUNNING = 2
 
-    const val ACTION_REMOVE_INVALID = "remove_invalid"
-    const val ACTION_RESOLVE_DOMAINS = "resolve_domains"
 
     /**
      * Suffix of the file next to an [importFile] path that receives the imported count, followed by a line
@@ -257,22 +255,7 @@ object SubscriptionQueue {
         runCatching { File(file.path + IMPORT_COUNT_SUFFIX).writeText(content) }.onFailure { Logs.w(it) }
     }
 
-    /**
-     * The desktop's manual group actions that need the core: [ACTION_REMOVE_INVALID] ("Remove Invalid") and
-     * [ACTION_RESOLVE_DOMAINS] ("Resolve Domain for group"). Queued like a refresh so they never race one over the
-     * group; returns the report text once done.
-     */
-    fun groupAction(gid: Long, action: String): String {
-        if (action != ACTION_REMOVE_INVALID && action != ACTION_RESOLVE_DOMAINS) {
-            return app.getString(R.string.subs_unknown_action, action)
-        }
-        return runQueued {
-            if (action == ACTION_REMOVE_INVALID) SubscriptionFilters.removeInvalid(gid)
-            else SubscriptionFilters.resolveDomains(gid)
-        }
-    }
-
-    /** "Resolve Domain" for chosen profiles (on_menu_resolve_selected_triggered), queued like [groupAction]. */
+    /** "Resolve Domain" for chosen profiles (on_menu_resolve_selected_triggered), queued with subscription refreshes. */
     fun resolveProfiles(ids: List<Long>): String = runQueued { SubscriptionFilters.resolveProfiles(ids) }
 
     private fun runQueued(action: suspend () -> String): String {

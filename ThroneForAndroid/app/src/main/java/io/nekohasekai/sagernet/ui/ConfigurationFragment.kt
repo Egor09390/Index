@@ -170,7 +170,6 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
     var testState = TestUiState()
         private set
     private var subscriptionStates: Map<Long, Int> = emptyMap()
-    private val busyGroups = HashSet<Long>()
 
     /** Height of the test panel above the navigation bar (the lists pad their bottom by at least it). */
     var panelHeight = 0
@@ -748,16 +747,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
         lists.forEach { it.adapter.onTestState(state) }
     }
 
-    /** The group's subscription update is queued / running, or a group action runs. */
-    fun setGroupBusy(groupId: Long, busy: Boolean) {
-        if (busy) busyGroups.add(groupId) else busyGroups.remove(groupId)
-        updateGroupProgress()
-    }
-
     private fun updateGroupProgress() {
         if (!::groupProgress.isInitialized) return
         val id = currentGroupId
-        groupProgress.isVisible = subscriptionStates[id] != null || id in busyGroups
+        groupProgress.isVisible = subscriptionStates[id] != null
     }
 
     /**

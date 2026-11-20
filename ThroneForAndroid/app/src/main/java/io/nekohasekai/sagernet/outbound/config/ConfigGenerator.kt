@@ -1512,25 +1512,20 @@ class ConfigGenerator @JvmOverloads constructor(
         state.coreConfig["experimental"] = experimental
     }
 
-    /**
-     * buildServicesSection (:2186-2212): the core builds the traffic tracker from the mere presence of an api service;
-     * with a port it also serves the sing-box dashboard, the copy the app bundles and unpacks into [DASHBOARD_PATH]
-     * before the start, like the desktop.
-     */
+    /** The API service also enables the core's traffic tracker, even without a listening port. */
     private fun buildServicesSection(state: BuildState) {
         if (state.forTest) return
-        val dashboard = settings.apiPort > 0
-        if (!dashboard && !settings.trafficStats) return
+        val listen = settings.apiPort > 0
+        if (!listen && !settings.trafficStats) return
         val api = jsonObjectOf(
             "type" to "api",
             "listen" to "127.0.0.1",
-            "listen_port" to if (dashboard) settings.apiPort else 0,
+            "listen_port" to if (listen) settings.apiPort else 0,
             "secret" to settings.apiSecret,
         )
-        if (dashboard) {
+        if (listen) {
             // Defaults to "*", i.e. any page the user visits could reach loopback.
             api["access_control_allow_origin"] = JsonArray.of("http://127.0.0.1:${settings.apiPort}")
-            api["dashboard"] = jsonObjectOf("enabled" to true, "path" to DASHBOARD_PATH)
         }
         state.coreConfig["services"] = JsonArray.of(api)
     }
@@ -1577,7 +1572,6 @@ class ConfigGenerator @JvmOverloads constructor(
          * apiDashboardDir (generate.h:10-11), the api service's `dashboard.path` relative to the core's working dir;
          * not the Clash external_ui dir, which holds a different UI.
          */
-        const val DASHBOARD_PATH = "sb-dashboard"
 
         /** The empty binary rule-set a deferred start begins uncached sets with, relative to the core's working dir. */
         const val EMPTY_RULE_SET_PATH = "empty-rule-set.srs"

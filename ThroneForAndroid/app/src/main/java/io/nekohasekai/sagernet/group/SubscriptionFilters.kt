@@ -24,7 +24,7 @@ import io.throneproj.mobile.ResolveRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** The post-update filters (GroupUpdater.cpp:183-296) and the manual group actions that need the core. */
+/** The post-update filters (GroupUpdater.cpp:183-296) and DNS resolution of selected profiles. */
 internal object SubscriptionFilters {
 
     /** [deleted] ids and the report sections to append to the change text; [ok] is false after a database error. */
@@ -119,31 +119,6 @@ internal object SubscriptionFilters {
         }
         return Outcome(deleted, report.toString())
     }
-
-    /**
-     * Remove Invalid (mainwindow_profiles.cpp:366-419) on group [gid] with the running-profile rule; unlike the
-     * desktop's manual action it keeps everything while the core is unreachable. Returns the report text.
-     */
-    suspend fun removeInvalid(gid: Long): String {
-        val profiles = ProfileManager.members(gid)
-        val scan = ProfileValidator.findInvalid(profiles)
-        if (scan.coreUnreachable) {
-            return app.getString(R.string.subs_invalid_core_unreachable).also { Logs.w(it) }
-        }
-        val invalid = profiles.filter { it.id in scan.invalid }
-        if (invalid.isEmpty()) return app.getString(R.string.subs_no_invalid)
-        val outcome = ProfileManager.batchDeleteProfiles(invalid.map { it.id })
-        if (!outcome.ok) SubscriptionRefresh.dbError(gid)
-        val names = invalid.map { it.outbound.displayTypeAndName() }
-        var report = app.getString(R.string.subs_removed_invalid, names.size) + "\n" +
-            SubscriptionRefresh.notice(names, "[-]", "removed")
-        if (outcome.kept.isNotEmpty()) report += "\n" + app.getString(R.string.subs_running_kept)
-        Logs.i(report)
-        return report.trim()
-    }
-
-    /** Resolve Domain for group (on_menu_resolve_domain_triggered): [resolveProfiles] over the members of [gid]. */
-    suspend fun resolveDomains(gid: Long): String = resolve(ProfileManager.members(gid))
 
     /**
      * Resolve Domain for the profiles [ids] (on_menu_resolve_selected_triggered), from any groups; unknown ids are

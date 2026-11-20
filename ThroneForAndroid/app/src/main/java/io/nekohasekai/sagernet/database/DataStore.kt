@@ -336,7 +336,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     val clashApiEnabled: Boolean get() = coreBoxClashApi > 0
 
     /** core_box_api_port is on: the sing-box API serves the dashboard on that loopback port. */
-    val apiDashboardEnabled: Boolean get() = coreBoxApiPort > 0
+    val boxApiEnabled: Boolean get() = coreBoxApiPort > 0
 
     // ------------------------------------------------------------------------------------------------ old cache, DO NOT ADD
 

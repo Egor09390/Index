@@ -1,3 +1,9 @@
+#### 2.0.7-quality.14
+
+* Remove the bundled sing-box dashboard, its WebView startup code and the real-time graphs and sampling pipeline.
+* Remove the About screen, its UI dependency and the obsolete whole-group actions. Keep the bundled license.
+* Retain the sing-box API, traffic counters, speed tests and subscription filters.
+
 #### 2.0.7-quality.13
 
 * Start the TPROXY root process while the main core prepares the connection.

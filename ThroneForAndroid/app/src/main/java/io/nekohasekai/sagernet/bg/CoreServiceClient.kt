@@ -45,7 +45,7 @@ object CoreServiceClient {
         }
     }
 
-    /** Binds for the duration of [block]; for one-shot calls such as `groupAction` or `warpRegister`. */
+    /** Binds for the duration of [block]; for one-shot calls such as `resolveProfiles` or `warpRegister`. */
     suspend fun <T> call(block: (ICoreService) -> T): T = withService { service -> block(service) }
 
     /**

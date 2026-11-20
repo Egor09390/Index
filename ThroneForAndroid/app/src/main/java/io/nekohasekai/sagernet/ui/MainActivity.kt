@@ -399,7 +399,6 @@ class MainActivity : ThemedActivity(),
             R.id.nav_settings -> displayFragment(SettingsFragment())
             R.id.nav_tools -> displayFragment(ToolsFragment())
             R.id.nav_logcat -> displayFragment(LogcatFragment())
-            R.id.nav_live_graphs -> displayFragment(LiveGraphsFragment())
             else -> return false
         }
         navigation.menu.findItem(id)?.isChecked = true
@@ -416,7 +415,6 @@ class MainActivity : ThemedActivity(),
         refreshConfigurationProfileState()
         when (val fragment = currentMainFragment ?: supportFragmentManager.findFragmentById(R.id.fragment_holder)) {
             is RouteFragment -> fragment.onServiceStateChanged()
-            is DashboardFragment -> fragment.onServiceStateChanged()
         }
 
         binding.fab.changeState(state, DataStore.serviceState, animate)
@@ -482,14 +480,13 @@ class MainActivity : ThemedActivity(),
         (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)?.showGroup(id)
     }
 
-    /** The stats bar's long-press menu: the live graphs, and a speed test of the running connection. */
+    /** The stats bar's long-press menu for a speed test of the running connection. */
     private fun showStatsMenu() {
         val popup = PopupMenu(this, binding.stats)
         popup.menuInflater.inflate(R.menu.stats_bar_menu, popup.menu)
         popup.menu.findItem(R.id.action_test_speed_current).isEnabled = DataStore.serviceState.connected
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
-                R.id.action_live_graphs -> displayFragmentWithId(R.id.nav_live_graphs)
                 R.id.action_test_speed_current -> {
                     if (!TestSessionClient.startCurrent(TestSpec.KIND_SPEED)) {
                         snackbar(R.string.profiles_test_busy).show()

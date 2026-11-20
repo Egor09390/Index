@@ -447,13 +447,6 @@ data class ProxyEntity(
         )
         fun clearTestResults(profileIds: List<Long>): Int
 
-        @Query(
-            "UPDATE `profiles` SET `latency` = 0, `latency_at` = 0, `dl_speed` = NULL, `ul_speed` = NULL, " +
-                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0 " +
-                "WHERE `gid` = :groupId"
-        )
-        fun clearGroupTestResults(groupId: Long): Int
-
         @Insert
         fun addProxy(proxy: ProxyEntity): Long
 
