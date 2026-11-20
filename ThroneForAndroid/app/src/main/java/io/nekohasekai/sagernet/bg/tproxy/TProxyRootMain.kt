@@ -81,7 +81,7 @@ internal object TProxyRootMain {
             val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
             try {
                 box.start()
-                val vpnUids = options.array("vpn_uids").strings().map { it.toInt() }.toSet()
+                val vpnUids = options.array("vpn_uids").map { (it as Number).toInt() }.toSet()
                 val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), vpnUids) { run(it) }
                 val cleanup = Thread { runCatching { routes.close() } }
                 Runtime.getRuntime().addShutdownHook(cleanup)

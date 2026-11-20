@@ -43,11 +43,11 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..c09eed3 100644
+index 6460f87..447e198 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
 @@ -1,3 +1,41 @@
-+#### 2.0.7-quality.8
++#### 2.0.7-quality.9
 +
 +* Exclude Android VPN clients from TPROXY before they connect, including their initial DNS and server connections.
 +
@@ -607,7 +607,7 @@ index 9cfc731..b9b2579 100644
          const val SERVICE_MAX_PROFILES = 100
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 new file mode 100644
-index 0000000..0a9368a
+index 0000000..5c7370a
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 @@ -0,0 +1,148 @@
@@ -694,7 +694,7 @@ index 0000000..0a9368a
 +            val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
 +            try {
 +                box.start()
-+                val vpnUids = options.array("vpn_uids").strings().map { it.toInt() }.toSet()
++                val vpnUids = options.array("vpn_uids").map { (it as Number).toInt() }.toSet()
 +                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), vpnUids) { run(it) }
 +                val cleanup = Thread { runCatching { routes.close() } }
 +                Runtime.getRuntime().addShutdownHook(cleanup)
@@ -2092,7 +2092,7 @@ index 0000000..78f32aa
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..a4ef1eb 100644
+index 751051e..b12f5b9 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -2100,7 +2100,7 @@ index 751051e..a4ef1eb 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.8
-+VERSION_CODE=121
++VERSION_NAME=2.0.7-quality.9
++VERSION_CODE=122
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

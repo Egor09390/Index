@@ -1,4 +1,4 @@
-#### 2.0.7-quality.8
+#### 2.0.7-quality.9
 
 * Exclude Android VPN clients from TPROXY before they connect, including their initial DNS and server connections.
 
