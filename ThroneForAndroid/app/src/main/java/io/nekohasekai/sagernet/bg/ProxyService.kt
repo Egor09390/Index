@@ -73,6 +73,7 @@ class ProxyService : Service(), BaseService.Interface {
             connectivity.registerNetworkCallback(vpn, callback)
         }
         vpnCallback = callback
+        Logs.i("[TPROXY] Android VPN available for Throne at start: ${defaultVpn() != null}")
         updateUpstreamVpn()
     }
 

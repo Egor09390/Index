@@ -32,12 +32,21 @@ internal class TProxyRoutes(
     )
 
     @Synchronized
-    fun start() {
+    fun start(rejectQuic: Boolean = false, onQuicRuleError: (Exception) -> Unit = {}) {
         check(undo.isEmpty())
         try {
             for (family in families) prepare(family)
             for (family in families) {
                 hook(family, "PREROUTING", "-i", "lo", "-m", "mark", "--mark", MARK, "-j", prerouting)
+            }
+            if (rejectQuic) {
+                for (family in families) {
+                    try {
+                        installQuicRejection(family)
+                    } catch (error: Exception) {
+                        onQuicRuleError(error)
+                    }
+                }
             }
             for (family in families) hook(family, "OUTPUT", "-j", output)
         } catch (error: Throwable) {
@@ -88,6 +97,18 @@ internal class TProxyRoutes(
                 "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
             ))
         }
+    }
+
+    private fun installQuicRejection(family: Family) {
+        // The filter OUTPUT hook runs after mangle OUTPUT. Only marked, intercepted packets match;
+        // the VPN transport, local sockets and exempt applications keep their own UDP path.
+        val args = listOf(
+            "-m", "mark", "--mark", MARK, "-p", "udp", "--dport", "443",
+            "-j", "REJECT", "--reject-with",
+            if (family.selector == "-4") "icmp-port-unreachable" else "icmp6-port-unreachable",
+        )
+        val command = listOf("/system/bin/${family.firewall}", "-w", "2", "-t", "filter")
+        apply(command + listOf("-I", "OUTPUT", "1") + args, command + listOf("-D", "OUTPUT") + args)
     }
 
     /** Report counts from our own rules and omit addresses and packet data. */

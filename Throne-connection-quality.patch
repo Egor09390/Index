@@ -43,10 +43,15 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..447e198 100644
+index 6460f87..71ff9bb 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,41 @@
+@@ -1,3 +1,46 @@
++#### 2.0.7-quality.10
++
++* Report the local TPROXY relay's loopback interface to the core at startup.
++* Reject intercepted QUIC promptly with TCP-only Naive to allow TCP fallback, preserving alternate UDP routes.
++
 +#### 2.0.7-quality.9
 +
 +* Exclude Android VPN clients from TPROXY before they connect, including their initial DNS and server connections.
@@ -145,10 +150,10 @@ index 67d1624..3ead639 100644
              this as Context
              if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, javaClass))
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-index f38a717..7d2fa03 100644
+index f38a717..d9338a1 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-@@ -2,15 +2,133 @@ package io.nekohasekai.sagernet.bg
+@@ -2,15 +2,134 @@ package io.nekohasekai.sagernet.bg
  
  import android.app.Service
  import android.content.Intent
@@ -224,6 +229,7 @@ index f38a717..7d2fa03 100644
 +            connectivity.registerNetworkCallback(vpn, callback)
 +        }
 +        vpnCallback = callback
++        Logs.i("[TPROXY] Android VPN available for Throne at start: ${defaultVpn() != null}")
 +        updateUpstreamVpn()
 +    }
 +
@@ -607,13 +613,16 @@ index 9cfc731..b9b2579 100644
          const val SERVICE_MAX_PROFILES = 100
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 new file mode 100644
-index 0000000..5c7370a
+index 0000000..b6f0010
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,166 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.os.Process
++import android.system.OsConstants
++import io.throneproj.mobile.NetworkInterface as CoreNetworkInterface
++import java.net.NetworkInterface
 +import androidx.annotation.Keep
 +import io.nekohasekai.sagernet.outbound.json.JsonArray
 +import io.nekohasekai.sagernet.outbound.json.JsonInput
@@ -691,7 +700,8 @@ index 0000000..5c7370a
 +                "outbounds" to JsonArray.of(target),
 +                "route" to jsonObjectOf("rules" to JsonArray.of(rejectLoopback), "final" to "throne"),
 +            )
-+            val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
++            val loopback = checkNotNull(NetworkInterface.getByName("lo")) { "Loopback interface is unavailable" }
++            val box = Mobile.newInstance(Platform(loopback), StartOptions().apply { coreConfig = config.toCompact() })
 +            try {
 +                box.start()
 +                val vpnUids = options.array("vpn_uids").map { (it as Number).toInt() }.toSet()
@@ -699,7 +709,9 @@ index 0000000..5c7370a
 +                val cleanup = Thread { runCatching { routes.close() } }
 +                Runtime.getRuntime().addShutdownHook(cleanup)
 +                try {
-+                    routes.start()
++                    routes.start(options.bool("reject_quic")) { error ->
++                        println("$LOG QUIC rejection unavailable: ${error.message?.lineSequence()?.firstOrNull().orEmpty()}")
++                    }
 +                    println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
 +                    println(READY)
 +                    // The app sends a stop byte. EOF also ends the session if the app dies.
@@ -741,7 +753,7 @@ index 0000000..5c7370a
 +    }
 +
 +    // The root core only listens on loopback and dials a numeric loopback address in the unprivileged core.
-+    private object Platform : PlatformInterface {
++    private class Platform(private val loopback: NetworkInterface) : PlatformInterface {
 +        override fun localDNSTransport(): LocalDNSTransport? = null
 +        override fun usePlatformAutoDetectInterfaceControl() = false
 +        override fun autoDetectInterfaceControl(fd: Int) = Unit
@@ -750,9 +762,21 @@ index 0000000..5c7370a
 +        override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String, sourcePort: Int, destinationAddress: String, destinationPort: Int): ConnectionOwner =
 +            error("Connection lookup unavailable")
 +        override fun packageNamesByUid(uid: Int): StringIterator? = null
-+        override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) = Unit
++        override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
++            listener.updateDefaultInterface(loopback.name, loopback.index, false, false)
++        }
 +        override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) = Unit
-+        override fun getInterfaces(): NetworkInterfaceIterator? = null
++        override fun getInterfaces(): NetworkInterfaceIterator {
++            val interfaces = listOf(CoreNetworkInterface().apply {
++                name = loopback.name
++                index = loopback.index
++                flags = OsConstants.IFF_UP or OsConstants.IFF_RUNNING or OsConstants.IFF_LOOPBACK
++            }).iterator()
++            return object : NetworkInterfaceIterator {
++                override fun hasNext() = interfaces.hasNext()
++                override fun next(): CoreNetworkInterface = interfaces.next()
++            }
++        }
 +        override fun readWIFIState(): WIFIState? = null
 +        override fun clearDNSCache() = Unit
 +        override fun sendNotification(notification: Notification) = Unit
@@ -761,10 +785,10 @@ index 0000000..5c7370a
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
 new file mode 100644
-index 0000000..cab7697
+index 0000000..c5501e3
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,162 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import java.io.Closeable
@@ -799,12 +823,21 @@ index 0000000..cab7697
 +    )
 +
 +    @Synchronized
-+    fun start() {
++    fun start(rejectQuic: Boolean = false, onQuicRuleError: (Exception) -> Unit = {}) {
 +        check(undo.isEmpty())
 +        try {
 +            for (family in families) prepare(family)
 +            for (family in families) {
 +                hook(family, "PREROUTING", "-i", "lo", "-m", "mark", "--mark", MARK, "-j", prerouting)
++            }
++            if (rejectQuic) {
++                for (family in families) {
++                    try {
++                        installQuicRejection(family)
++                    } catch (error: Exception) {
++                        onQuicRuleError(error)
++                    }
++                }
 +            }
 +            for (family in families) hook(family, "OUTPUT", "-j", output)
 +        } catch (error: Throwable) {
@@ -855,6 +888,18 @@ index 0000000..cab7697
 +                "--on-ip", family.localhost, "--on-port", port.toString(), "--tproxy-mark", MARK,
 +            ))
 +        }
++    }
++
++    private fun installQuicRejection(family: Family) {
++        // The filter OUTPUT hook runs after mangle OUTPUT. Only marked, intercepted packets match;
++        // the VPN transport, local sockets and exempt applications keep their own UDP path.
++        val args = listOf(
++            "-m", "mark", "--mark", MARK, "-p", "udp", "--dport", "443",
++            "-j", "REJECT", "--reject-with",
++            if (family.selector == "-4") "icmp-port-unreachable" else "icmp6-port-unreachable",
++        )
++        val command = listOf("/system/bin/${family.firewall}", "-w", "2", "-t", "filter")
++        apply(command + listOf("-I", "OUTPUT", "1") + args, command + listOf("-D", "OUTPUT") + args)
 +    }
 +
 +    /** Report counts from our own rules and omit addresses and packet data. */
@@ -908,10 +953,10 @@ index 0000000..cab7697
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 new file mode 100644
-index 0000000..40eaa89
+index 0000000..6ccb272
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,156 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.Manifest
@@ -950,7 +995,8 @@ index 0000000..40eaa89
 +    @Volatile private var errorMessage: String? = null
 +
 +    fun start() {
-+        val mixed = JsonInput.parseObject(coreConfig).array("inbounds")
++        val config = JsonInput.parseObject(coreConfig)
++        val mixed = config.array("inbounds")
 +            .mapNotNull { it as? JsonObject }
 +            .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
 +        if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
@@ -976,6 +1022,7 @@ index 0000000..40eaa89
 +        val options = jsonObjectOf(
 +            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
 +            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
++            "reject_quic" to requiresQuicFallback(config),
 +            "work_dir" to workDir.absolutePath,
 +        )
 +
@@ -1065,6 +1112,37 @@ index 0000000..40eaa89
 +    }
 +
 +    private fun quote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyTransportPolicy.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyTransportPolicy.kt
+new file mode 100644
+index 0000000..3f73c22
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyTransportPolicy.kt
+@@ -0,0 +1,25 @@
++package io.nekohasekai.sagernet.bg.tproxy
++
++import io.nekohasekai.sagernet.outbound.json.JsonObject
++
++internal fun requiresQuicFallback(config: JsonObject): Boolean {
++    val route = config.obj("route")
++    val outbounds = config.array("outbounds").filterIsInstance<JsonObject>()
++    val final = route.string("final")
++    val outbound = if (final.isEmpty()) outbounds.firstOrNull() else outbounds.find { it.string("tag") == final }
++    if (outbound?.string("type") != "naive") return false
++    if (outbound.bool("udp_over_tcp") || outbound.obj("udp_over_tcp").bool("enabled")) return false
++
++    val selected = outbound.string("tag")
++    return route.array("rules").filterIsInstance<JsonObject>().none { rule ->
++        val target = rule.string("outbound")
++        if (target.isEmpty() || target == selected) return@none false
++        val inbounds = rule.array("inbound").strings() + rule.string("inbound")
++        val networks = rule.array("network").strings() + rule.string("network")
++        val ports = rule.array("port").mapNotNull { (it as? Number)?.toInt() } +
++            listOf(rule.int("port")).filter { it > 0 }
++        (inbounds.all(String::isBlank) || "mixed-in" in inbounds || rule.bool("invert")) &&
++            (networks.all(String::isBlank) || "udp" in networks || rule.bool("invert")) &&
++            (ports.isEmpty() || 443 in ports || rule.bool("invert"))
++    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
 index 9eebe31..bf95b02 100644
@@ -1970,10 +2048,10 @@ index 0000000..487816d
 +</resources>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
-index 0000000..78f32aa
+index 0000000..376cd42
 --- /dev/null
 +++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,134 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import org.junit.Assert.assertEquals
@@ -2077,6 +2155,23 @@ index 0000000..78f32aa
 +    }
 +
 +    @Test
++    fun quicFallbackRejectsOnlyCapturedUdp443AndCleansUp() {
++        val commands = mutableListOf<List<String>>()
++        val routes = TProxyRoutes(10231, 30080, emptyList(), setOf(10257), commands::add)
++        routes.start(rejectQuic = true)
++        val installs = commands.filter { "filter" in it && "-I" in it }
++        assertEquals(2, installs.size)
++        assertTrue(installs.all { "--mark" in it && "0x10000000/0x10000000" in it && "--dport" in it &&
++            "443" in it && "udp" in it && "REJECT" in it })
++        assertTrue("icmp-port-unreachable" in installs[0] && "icmp6-port-unreachable" in installs[1])
++        val plain = mutableListOf<List<String>>()
++        TProxyRoutes(10231, 30080, emptyList(), emptySet(), plain::add).start()
++        assertTrue(plain.none { "REJECT" in it })
++        routes.close()
++        assertEquals(2, commands.count { "filter" in it && "-D" in it && "REJECT" in it })
++    }
++
++    @Test
 +    fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
 +        val commands = mutableListOf<List<String>>()
 +        val failure = IllegalStateException("test failure")
@@ -2091,8 +2186,40 @@ index 0000000..78f32aa
 +        assertEquals(2, commands.count { "route" in it && "del" in it })
 +    }
 +}
+diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyTransportPolicyTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyTransportPolicyTest.kt
+new file mode 100644
+index 0000000..b6f8854
+--- /dev/null
++++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyTransportPolicyTest.kt
+@@ -0,0 +1,26 @@
++package io.nekohasekai.sagernet.bg.tproxy
++
++import io.nekohasekai.sagernet.outbound.json.JsonInput
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class TProxyTransportPolicyTest {
++    @Test
++    fun onlyTcpOnlyNaiveFallsBackWhenThereIsNoAlternateUdpRoute() {
++        fun fallback(type: String, extra: String = "", rules: String = "[]", final: String = "proxy"): Boolean =
++            requiresQuicFallback(JsonInput.parseObject("""
++                {"outbounds":[{"type":"$type","tag":"proxy"$extra}],
++                 "route":{"final":"$final","rules":$rules}}
++            """.trimIndent()))
++        assertTrue(fallback("naive"))
++        assertTrue(fallback("naive", rules = """[{"network":"tcp","outbound":"direct"}]"""))
++        assertTrue(fallback("naive", rules = """[{"inbound":"internal","outbound":"direct"}]"""))
++        assertTrue(fallback("naive", rules = """[{"port":[53],"outbound":"direct"}]"""))
++        assertFalse(fallback("naive", extra = ""","udp_over_tcp":true"""))
++        assertFalse(fallback("naive", extra = ""","udp_over_tcp":{"enabled":true}"""))
++        assertFalse(fallback("tuic"))
++        assertFalse(fallback("naive", rules = """[{"network":["udp"],"outbound":"direct"}]"""))
++        assertFalse(fallback("naive", final = "direct"))
++    }
++}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..b12f5b9 100644
+index 751051e..1d2f57a 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -2100,7 +2227,7 @@ index 751051e..b12f5b9 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.9
-+VERSION_CODE=122
++VERSION_NAME=2.0.7-quality.10
++VERSION_CODE=123
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

@@ -1,6 +1,9 @@
 package io.nekohasekai.sagernet.bg.tproxy
 
 import android.os.Process
+import android.system.OsConstants
+import io.throneproj.mobile.NetworkInterface as CoreNetworkInterface
+import java.net.NetworkInterface
 import androidx.annotation.Keep
 import io.nekohasekai.sagernet.outbound.json.JsonArray
 import io.nekohasekai.sagernet.outbound.json.JsonInput
@@ -78,7 +81,8 @@ internal object TProxyRootMain {
                 "outbounds" to JsonArray.of(target),
                 "route" to jsonObjectOf("rules" to JsonArray.of(rejectLoopback), "final" to "throne"),
             )
-            val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
+            val loopback = checkNotNull(NetworkInterface.getByName("lo")) { "Loopback interface is unavailable" }
+            val box = Mobile.newInstance(Platform(loopback), StartOptions().apply { coreConfig = config.toCompact() })
             try {
                 box.start()
                 val vpnUids = options.array("vpn_uids").map { (it as Number).toInt() }.toSet()
@@ -86,7 +90,9 @@ internal object TProxyRootMain {
                 val cleanup = Thread { runCatching { routes.close() } }
                 Runtime.getRuntime().addShutdownHook(cleanup)
                 try {
-                    routes.start()
+                    routes.start(options.bool("reject_quic")) { error ->
+                        println("$LOG QUIC rejection unavailable: ${error.message?.lineSequence()?.firstOrNull().orEmpty()}")
+                    }
                     println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
                     println(READY)
                     // The app sends a stop byte. EOF also ends the session if the app dies.
@@ -128,7 +134,7 @@ internal object TProxyRootMain {
     }
 
     // The root core only listens on loopback and dials a numeric loopback address in the unprivileged core.
-    private object Platform : PlatformInterface {
+    private class Platform(private val loopback: NetworkInterface) : PlatformInterface {
         override fun localDNSTransport(): LocalDNSTransport? = null
         override fun usePlatformAutoDetectInterfaceControl() = false
         override fun autoDetectInterfaceControl(fd: Int) = Unit
@@ -137,9 +143,21 @@ internal object TProxyRootMain {
         override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String, sourcePort: Int, destinationAddress: String, destinationPort: Int): ConnectionOwner =
             error("Connection lookup unavailable")
         override fun packageNamesByUid(uid: Int): StringIterator? = null
-        override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) = Unit
+        override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
+            listener.updateDefaultInterface(loopback.name, loopback.index, false, false)
+        }
         override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) = Unit
-        override fun getInterfaces(): NetworkInterfaceIterator? = null
+        override fun getInterfaces(): NetworkInterfaceIterator {
+            val interfaces = listOf(CoreNetworkInterface().apply {
+                name = loopback.name
+                index = loopback.index
+                flags = OsConstants.IFF_UP or OsConstants.IFF_RUNNING or OsConstants.IFF_LOOPBACK
+            }).iterator()
+            return object : NetworkInterfaceIterator {
+                override fun hasNext() = interfaces.hasNext()
+                override fun next(): CoreNetworkInterface = interfaces.next()
+            }
+        }
         override fun readWIFIState(): WIFIState? = null
         override fun clearDNSCache() = Unit
         override fun sendNotification(notification: Notification) = Unit

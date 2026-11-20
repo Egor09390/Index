@@ -101,6 +101,23 @@ class TProxyRoutesTest {
     }
 
     @Test
+    fun quicFallbackRejectsOnlyCapturedUdp443AndCleansUp() {
+        val commands = mutableListOf<List<String>>()
+        val routes = TProxyRoutes(10231, 30080, emptyList(), setOf(10257), commands::add)
+        routes.start(rejectQuic = true)
+        val installs = commands.filter { "filter" in it && "-I" in it }
+        assertEquals(2, installs.size)
+        assertTrue(installs.all { "--mark" in it && "0x10000000/0x10000000" in it && "--dport" in it &&
+            "443" in it && "udp" in it && "REJECT" in it })
+        assertTrue("icmp-port-unreachable" in installs[0] && "icmp6-port-unreachable" in installs[1])
+        val plain = mutableListOf<List<String>>()
+        TProxyRoutes(10231, 30080, emptyList(), emptySet(), plain::add).start()
+        assertTrue(plain.none { "REJECT" in it })
+        routes.close()
+        assertEquals(2, commands.count { "filter" in it && "-D" in it && "REJECT" in it })
+    }
+
+    @Test
     fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
         val commands = mutableListOf<List<String>>()
         val failure = IllegalStateException("test failure")

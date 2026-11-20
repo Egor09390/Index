@@ -36,7 +36,8 @@ internal class TProxySession(
     @Volatile private var errorMessage: String? = null
 
     fun start() {
-        val mixed = JsonInput.parseObject(coreConfig).array("inbounds")
+        val config = JsonInput.parseObject(coreConfig)
+        val mixed = config.array("inbounds")
             .mapNotNull { it as? JsonObject }
             .firstOrNull { it.string("type") == "mixed" && it.string("tag") == "mixed-in" }
         if (mixed == null || mixed.string("listen") !in listOf("127.0.0.1", "::", "0.0.0.0") ||
@@ -62,6 +63,7 @@ internal class TProxySession(
         val options = jsonObjectOf(
             "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
             "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
+            "reject_quic" to requiresQuicFallback(config),
             "work_dir" to workDir.absolutePath,
         )
 
