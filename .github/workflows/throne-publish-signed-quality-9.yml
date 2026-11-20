@@ -1,0 +1,22 @@
+name: Publish signed Throne quality.9 APK
+on:
+  push:
+    branches: [throne-quality-9-download]
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Attach the verified signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          gh release download v2.0.7-quality.9 --pattern Throne-2.0.7-quality.9-arm64-v8a-debug.apk
+          cat "$GITHUB_WORKSPACE"/throne-apk-delivery/patch-* > restore-signed-quality-9.py
+          python3 restore-signed-quality-9.py Throne-2.0.7-quality.9-arm64-v8a-debug.apk Throne-2.0.7-quality.9-arm64-v8a.apk
+          gh release upload v2.0.7-quality.9 Throne-2.0.7-quality.9-arm64-v8a.apk
