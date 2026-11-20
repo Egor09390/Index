@@ -1,7 +1,7 @@
-name: Throne connection quality prerelease
+name: Throne TPROXY parallel build
 on:
   push:
-    branches: [throne-connection-quality]
+    branches: [throne-tproxy-parallel]
     paths:
       - Throne-connection-quality.patch
       - .github/workflows/throne-connection-quality.yml

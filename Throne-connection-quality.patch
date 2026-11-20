@@ -43,10 +43,14 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..6e4b002 100644
+index 6460f87..14d1887 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,23 @@
+@@ -1,3 +1,27 @@
++#### 2.0.7-quality.4-tproxy
++
++* Build Throne TPROXY with its own Android application ID and launcher name.
++
 +#### 2.0.7-quality.4
 +
 +* Show TPROXY (root) in the localized service mode menu.
@@ -1695,9 +1699,17 @@ index 0000000..4e214b0
 +    <color name="connection_quality_red">#B3261E</color>
 +</resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 8b6872e..a7a0a26 100644
+index 8b6872e..e82386b 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="app_name" translatable="false">Throne</string>
++    <string name="app_name" translatable="false">Throne TPROXY</string>
+     <string name="app_name_long" translatable="false">Throne for Android</string>
+     <string name="app_desc">The universal proxy toolchain for Android, written in Kotlin.</string>
+     <string name="project">Project</string>
 @@ -3007,4 +3007,6 @@
      <string name="autosel_notice_exhausted_upstream">Every running profile stopped working through the hops in front of it — rebuilding with the next candidates.</string>
      <string name="validation_route_outbound_chain_selector">Routing rules cannot use the chain \"%1$s\": it holds an auto selector, so it can only be started. Pick another outbound.</string>
@@ -1771,15 +1783,15 @@ index 0000000..cd96eb2
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..6d7434e 100644
+index 751051e..5211e44 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
 -PACKAGE_NAME=com.nb4a.throne
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
-+PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.4
++PACKAGE_NAME=com.nb4a.throne.tproxy
++VERSION_NAME=2.0.7-quality.4-tproxy
 +VERSION_CODE=117
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

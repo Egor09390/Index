@@ -1,3 +1,7 @@
+#### 2.0.7-quality.4-tproxy
+
+* Build Throne TPROXY with its own Android application ID and launcher name.
+
 #### 2.0.7-quality.4
 
 * Show TPROXY (root) in the localized service mode menu.
