@@ -155,10 +155,10 @@ index 67d1624..3ead639 100644
              this as Context
              if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, javaClass))
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-index f38a717..9ca9489 100644
+index f38a717..ebd9765 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/ProxyService.kt
-@@ -2,15 +2,153 @@ package io.nekohasekai.sagernet.bg
+@@ -2,15 +2,157 @@ package io.nekohasekai.sagernet.bg
  
  import android.app.Service
  import android.content.Intent
@@ -214,6 +214,10 @@ index f38a717..9ca9489 100644
 +        val connectivity = SagerNet.connectivity
 +        fun observer() = object : ConnectivityManager.NetworkCallback() {
 +            private fun update() = runOnMainDispatcher { updateUpstreamVpn(session) }
++
++            override fun onAvailable(network: Network) {
++                update()
++            }
 +
 +            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
 +                update()
@@ -1022,7 +1026,7 @@ index 0000000..a0fc908
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 new file mode 100644
-index 0000000..ff85f45
+index 0000000..99313c0
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 @@ -0,0 +1,172 @@
@@ -1096,7 +1100,7 @@ index 0000000..ff85f45
 +            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
 +            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
 +            "reject_quic" to requiresQuicFallback(config),
-+            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces),
++            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces.sorted()),
 +            "work_dir" to workDir.absolutePath,
 +        )
 +
@@ -1167,7 +1171,7 @@ index 0000000..ff85f45
 +    fun setAndroidVpnInterfaces(names: Set<String>): Boolean = synchronized(commands) {
 +        val child = process ?: return false
 +        if (closing || !connected || names == vpnInterfaces) return false
-+        send(child, jsonObjectOf(TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(names)))
++        send(child, jsonObjectOf(TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(names.sorted())))
 +        vpnInterfaces = names
 +        true
 +    }

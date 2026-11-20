@@ -54,6 +54,10 @@ class ProxyService : Service(), BaseService.Interface {
         fun observer() = object : ConnectivityManager.NetworkCallback() {
             private fun update() = runOnMainDispatcher { updateUpstreamVpn(session) }
 
+            override fun onAvailable(network: Network) {
+                update()
+            }
+
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 update()
             }

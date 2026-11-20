@@ -68,7 +68,7 @@ internal class TProxySession(
             "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
             "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
             "reject_quic" to requiresQuicFallback(config),
-            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces),
+            TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(initialVpnInterfaces.sorted()),
             "work_dir" to workDir.absolutePath,
         )
 
@@ -139,7 +139,7 @@ internal class TProxySession(
     fun setAndroidVpnInterfaces(names: Set<String>): Boolean = synchronized(commands) {
         val child = process ?: return false
         if (closing || !connected || names == vpnInterfaces) return false
-        send(child, jsonObjectOf(TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(names)))
+        send(child, jsonObjectOf(TProxyRootMain.VPN_INTERFACES to JsonValues.stringArray(names.sorted())))
         vpnInterfaces = names
         true
     }
