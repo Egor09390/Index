@@ -1,6 +1,10 @@
 package io.nekohasekai.sagernet.bg.tproxy
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.VpnService
 import android.os.Process
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
@@ -54,8 +58,10 @@ internal class TProxySession(
         bypass.add("fe80::/10")
         val workDir = File(context.cacheDir, "tproxy")
         check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
+        val vpnUids = vpnClientUids()
         val options = jsonObjectOf(
             "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
+            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
             "work_dir" to workDir.absolutePath,
         )
 
@@ -108,6 +114,17 @@ internal class TProxySession(
             error(context.getString(R.string.tproxy_start_failed, message))
         }
     }
+
+    // Query before installing OUTPUT hooks so a VPN can start even when there is no VPN network yet.
+    @Suppress("DEPRECATION")
+    private fun vpnClientUids(): Set<Int> = context.packageManager.queryIntentServices(
+        Intent(VpnService.SERVICE_INTERFACE),
+        PackageManager.MATCH_DISABLED_COMPONENTS,
+    ).mapNotNull { result ->
+        val service = result.serviceInfo ?: return@mapNotNull null
+        val uid = service.applicationInfo?.uid ?: return@mapNotNull null
+        uid.takeIf { service.permission == Manifest.permission.BIND_VPN_SERVICE && it > 0 && it != Process.myUid() }
+    }.toSortedSet()
 
     fun requestStop() {
         closing = true

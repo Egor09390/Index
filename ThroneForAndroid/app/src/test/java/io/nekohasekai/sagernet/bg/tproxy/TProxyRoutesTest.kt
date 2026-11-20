@@ -8,7 +8,7 @@ class TProxyRoutesTest {
     @Test
     fun stopReversesPolicyAndFirewallHooks() {
         val commands = mutableListOf<List<String>>()
-        val routes = TProxyRoutes(10231, 30080, listOf("10.0.0.0/8", "fc00::/7"), commands::add)
+        val routes = TProxyRoutes(10231, 30080, listOf("10.0.0.0/8", "fc00::/7"), emptySet(), commands::add)
         routes.start()
         val beforeClose = commands.size
         assertEquals(4, commands.count { "TPROXY" in it && "--on-port" in it })
@@ -30,7 +30,7 @@ class TProxyRoutesTest {
     @Test
     fun preroutingSkipsRepliesBeforeApplyingTproxy() {
         val commands = mutableListOf<List<String>>()
-        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
+        TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add).start()
 
         for (name in listOf("iptables", "ip6tables")) {
             val rules = commands.filter {
@@ -45,7 +45,7 @@ class TProxyRoutesTest {
     @Test
     fun androidVpnTransportBypassesInterceptionIncludingDns() {
         val commands = mutableListOf<List<String>>()
-        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
+        TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add).start()
 
         for (name in listOf("iptables", "ip6tables")) {
             val rules = commands.filter {
@@ -60,8 +60,32 @@ class TProxyRoutesTest {
     }
 
     @Test
+    fun vpnClientsBypassBeforeDnsAndDataEvenWithoutVpnSocketMarks() {
+        val commands = mutableListOf<List<String>>()
+        TProxyRoutes(10231, 30080, emptyList(), setOf(10257, 10732), commands::add).start()
+
+        for (name in listOf("iptables", "ip6tables")) {
+            val outputRules = commands.filter {
+                it.first().endsWith("/$name") && "-A" in it && "THRONE_TPROXY_OUT" in it
+            }
+            val firstMark = outputRules.indexOfFirst { "--set-xmark" in it }
+            assertTrue(firstMark >= 0)
+            for (uid in listOf("10257", "10732")) {
+                assertEquals(
+                    1,
+                    outputRules.take(firstMark).count {
+                        it.takeLast(6) == listOf("-m", "owner", "--uid-owner", uid, "-j", "RETURN")
+                    },
+                )
+            }
+        }
+        val firstHook = commands.indexOfFirst { "-I" in it && "OUTPUT" in it }
+        assertTrue(firstHook > commands.indexOfLast { "THRONE_TPROXY_OUT" in it && "-A" in it })
+    }
+
+    @Test
     fun packetCountsReportOnlyTransparentProxyRules() {
-        val routes = TProxyRoutes(10231, 30080, emptyList()) { }
+        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { }
         val stats = routes.packetCounts { command ->
             assertTrue(command.takeLast(5) == listOf("-L", "THRONE_TPROXY_IN", "-n", "-v", "-x"))
             val v4 = command.first().endsWith("/iptables")
@@ -80,7 +104,7 @@ class TProxyRoutesTest {
     fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
         val commands = mutableListOf<List<String>>()
         val failure = IllegalStateException("test failure")
-        val routes = TProxyRoutes(10231, 30080, emptyList()) { command ->
+        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { command ->
             commands.add(command)
             if (command.first().endsWith("ip6tables") && "-I" in command && "OUTPUT" in command) throw failure
         }

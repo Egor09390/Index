@@ -7,6 +7,7 @@ internal class TProxyRoutes(
     private val uid: Int,
     private val port: Int,
     private val bypassRanges: List<String>,
+    private val vpnUids: Set<Int>,
     private val run: (List<String>) -> Unit,
 ) : Closeable {
     private val undo = ArrayDeque<List<String>>()
@@ -60,6 +61,10 @@ internal class TProxyRoutes(
         outputRule("-o", "lo", "-j", "RETURN")
         outputRule("-m", "owner", "--uid-owner", "0", "-j", "RETURN")
         outputRule("-m", "owner", "--uid-owner", uid.toString(), "-j", "RETURN")
+        // A VPN client can contact its server before calling protect() or establishing a VPN.
+        for (vpnUid in vpnUids) {
+            outputRule("-m", "owner", "--uid-owner", vpnUid.toString(), "-j", "RETURN")
+        }
         // VpnService.protect() marks the VPN's transport sockets. Reinjecting them would loop.
         outputRule("-m", "mark", "--mark", ANDROID_VPN_PROTECTED, "-j", "RETURN")
         outputRule("-d", family.multicast, "-j", "RETURN")

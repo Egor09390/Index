@@ -81,11 +81,13 @@ internal object TProxyRootMain {
             val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
             try {
                 box.start()
-                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings()) { run(it) }
+                val vpnUids = options.array("vpn_uids").strings().map { it.toInt() }.toSet()
+                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), vpnUids) { run(it) }
                 val cleanup = Thread { runCatching { routes.close() } }
                 Runtime.getRuntime().addShutdownHook(cleanup)
                 try {
                     routes.start()
+                    println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
                     println(READY)
                     // The app sends a stop byte. EOF also ends the session if the app dies.
                     input.read()

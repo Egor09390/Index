@@ -43,10 +43,14 @@ index 0000000..286f858
 +          printf '\nTest APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/quality-release.md"
 +          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/quality-release.md"
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..27437f2 100644
+index 6460f87..c09eed3 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,37 @@
+@@ -1,3 +1,41 @@
++#### 2.0.7-quality.8
++
++* Exclude Android VPN clients from TPROXY before they connect, including their initial DNS and server connections.
++
 +#### 2.0.7-quality.7
 +
 +* Route TPROXY's upstream traffic and system DNS through the Android VPN when it covers Throne.
@@ -603,10 +607,10 @@ index 9cfc731..b9b2579 100644
          const val SERVICE_MAX_PROFILES = 100
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
 new file mode 100644
-index 0000000..750a3f4
+index 0000000..0a9368a
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRootMain.kt
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,148 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import android.os.Process
@@ -690,11 +694,13 @@ index 0000000..750a3f4
 +            val box = Mobile.newInstance(Platform, StartOptions().apply { coreConfig = config.toCompact() })
 +            try {
 +                box.start()
-+                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings()) { run(it) }
++                val vpnUids = options.array("vpn_uids").strings().map { it.toInt() }.toSet()
++                val routes = TProxyRoutes(uid, port, options.array("bypass_ranges").strings(), vpnUids) { run(it) }
 +                val cleanup = Thread { runCatching { routes.close() } }
 +                Runtime.getRuntime().addShutdownHook(cleanup)
 +                try {
 +                    routes.start()
++                    println("$LOG VPN client UIDs excluded from interception: ${vpnUids.size}")
 +                    println(READY)
 +                    // The app sends a stop byte. EOF also ends the session if the app dies.
 +                    input.read()
@@ -755,10 +761,10 @@ index 0000000..750a3f4
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
 new file mode 100644
-index 0000000..20592aa
+index 0000000..cab7697
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutes.kt
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,141 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import java.io.Closeable
@@ -768,6 +774,7 @@ index 0000000..20592aa
 +    private val uid: Int,
 +    private val port: Int,
 +    private val bypassRanges: List<String>,
++    private val vpnUids: Set<Int>,
 +    private val run: (List<String>) -> Unit,
 +) : Closeable {
 +    private val undo = ArrayDeque<List<String>>()
@@ -821,6 +828,10 @@ index 0000000..20592aa
 +        outputRule("-o", "lo", "-j", "RETURN")
 +        outputRule("-m", "owner", "--uid-owner", "0", "-j", "RETURN")
 +        outputRule("-m", "owner", "--uid-owner", uid.toString(), "-j", "RETURN")
++        // A VPN client can contact its server before calling protect() or establishing a VPN.
++        for (vpnUid in vpnUids) {
++            outputRule("-m", "owner", "--uid-owner", vpnUid.toString(), "-j", "RETURN")
++        }
 +        // VpnService.protect() marks the VPN's transport sockets. Reinjecting them would loop.
 +        outputRule("-m", "mark", "--mark", ANDROID_VPN_PROTECTED, "-j", "RETURN")
 +        outputRule("-d", family.multicast, "-j", "RETURN")
@@ -897,13 +908,17 @@ index 0000000..20592aa
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
 new file mode 100644
-index 0000000..7e4a275
+index 0000000..40eaa89
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/tproxy/TProxySession.kt
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,154 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
++import android.Manifest
 +import android.content.Context
++import android.content.Intent
++import android.content.pm.PackageManager
++import android.net.VpnService
 +import android.os.Process
 +import io.nekohasekai.sagernet.R
 +import io.nekohasekai.sagernet.database.DataStore
@@ -957,8 +972,10 @@ index 0000000..7e4a275
 +        bypass.add("fe80::/10")
 +        val workDir = File(context.cacheDir, "tproxy")
 +        check(workDir.isDirectory || workDir.mkdirs()) { "Cannot create the TPROXY cache directory" }
++        val vpnUids = vpnClientUids()
 +        val options = jsonObjectOf(
 +            "uid" to Process.myUid(), "port" to port, "target" to target, "bypass_ranges" to bypass,
++            "vpn_uids" to JsonArray().apply { vpnUids.forEach { add(it) } },
 +            "work_dir" to workDir.absolutePath,
 +        )
 +
@@ -1011,6 +1028,17 @@ index 0000000..7e4a275
 +            error(context.getString(R.string.tproxy_start_failed, message))
 +        }
 +    }
++
++    // Query before installing OUTPUT hooks so a VPN can start even when there is no VPN network yet.
++    @Suppress("DEPRECATION")
++    private fun vpnClientUids(): Set<Int> = context.packageManager.queryIntentServices(
++        Intent(VpnService.SERVICE_INTERFACE),
++        PackageManager.MATCH_DISABLED_COMPONENTS,
++    ).mapNotNull { result ->
++        val service = result.serviceInfo ?: return@mapNotNull null
++        val uid = service.applicationInfo?.uid ?: return@mapNotNull null
++        uid.takeIf { service.permission == Manifest.permission.BIND_VPN_SERVICE && it > 0 && it != Process.myUid() }
++    }.toSortedSet()
 +
 +    fun requestStop() {
 +        closing = true
@@ -1942,10 +1970,10 @@ index 0000000..487816d
 +</resources>
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
-index 0000000..9f1f146
+index 0000000..78f32aa
 --- /dev/null
 +++ b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,117 @@
 +package io.nekohasekai.sagernet.bg.tproxy
 +
 +import org.junit.Assert.assertEquals
@@ -1956,7 +1984,7 @@ index 0000000..9f1f146
 +    @Test
 +    fun stopReversesPolicyAndFirewallHooks() {
 +        val commands = mutableListOf<List<String>>()
-+        val routes = TProxyRoutes(10231, 30080, listOf("10.0.0.0/8", "fc00::/7"), commands::add)
++        val routes = TProxyRoutes(10231, 30080, listOf("10.0.0.0/8", "fc00::/7"), emptySet(), commands::add)
 +        routes.start()
 +        val beforeClose = commands.size
 +        assertEquals(4, commands.count { "TPROXY" in it && "--on-port" in it })
@@ -1978,7 +2006,7 @@ index 0000000..9f1f146
 +    @Test
 +    fun preroutingSkipsRepliesBeforeApplyingTproxy() {
 +        val commands = mutableListOf<List<String>>()
-+        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
++        TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add).start()
 +
 +        for (name in listOf("iptables", "ip6tables")) {
 +            val rules = commands.filter {
@@ -1993,7 +2021,7 @@ index 0000000..9f1f146
 +    @Test
 +    fun androidVpnTransportBypassesInterceptionIncludingDns() {
 +        val commands = mutableListOf<List<String>>()
-+        TProxyRoutes(10231, 30080, emptyList(), commands::add).start()
++        TProxyRoutes(10231, 30080, emptyList(), emptySet(), commands::add).start()
 +
 +        for (name in listOf("iptables", "ip6tables")) {
 +            val rules = commands.filter {
@@ -2008,8 +2036,32 @@ index 0000000..9f1f146
 +    }
 +
 +    @Test
++    fun vpnClientsBypassBeforeDnsAndDataEvenWithoutVpnSocketMarks() {
++        val commands = mutableListOf<List<String>>()
++        TProxyRoutes(10231, 30080, emptyList(), setOf(10257, 10732), commands::add).start()
++
++        for (name in listOf("iptables", "ip6tables")) {
++            val outputRules = commands.filter {
++                it.first().endsWith("/$name") && "-A" in it && "THRONE_TPROXY_OUT" in it
++            }
++            val firstMark = outputRules.indexOfFirst { "--set-xmark" in it }
++            assertTrue(firstMark >= 0)
++            for (uid in listOf("10257", "10732")) {
++                assertEquals(
++                    1,
++                    outputRules.take(firstMark).count {
++                        it.takeLast(6) == listOf("-m", "owner", "--uid-owner", uid, "-j", "RETURN")
++                    },
++                )
++            }
++        }
++        val firstHook = commands.indexOfFirst { "-I" in it && "OUTPUT" in it }
++        assertTrue(firstHook > commands.indexOfLast { "THRONE_TPROXY_OUT" in it && "-A" in it })
++    }
++
++    @Test
 +    fun packetCountsReportOnlyTransparentProxyRules() {
-+        val routes = TProxyRoutes(10231, 30080, emptyList()) { }
++        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { }
 +        val stats = routes.packetCounts { command ->
 +            assertTrue(command.takeLast(5) == listOf("-L", "THRONE_TPROXY_IN", "-n", "-v", "-x"))
 +            val v4 = command.first().endsWith("/iptables")
@@ -2028,7 +2080,7 @@ index 0000000..9f1f146
 +    fun failedSecondOutputHookRemovesFirstOutputHookAndBothPolicyRoutes() {
 +        val commands = mutableListOf<List<String>>()
 +        val failure = IllegalStateException("test failure")
-+        val routes = TProxyRoutes(10231, 30080, emptyList()) { command ->
++        val routes = TProxyRoutes(10231, 30080, emptyList(), emptySet()) { command ->
 +            commands.add(command)
 +            if (command.first().endsWith("ip6tables") && "-I" in command && "OUTPUT" in command) throw failure
 +        }
@@ -2040,7 +2092,7 @@ index 0000000..9f1f146
 +    }
 +}
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..0036228 100644
+index 751051e..a4ef1eb 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -2048,7 +2100,7 @@ index 751051e..0036228 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.7
-+VERSION_CODE=120
++VERSION_NAME=2.0.7-quality.8
++VERSION_CODE=121
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file

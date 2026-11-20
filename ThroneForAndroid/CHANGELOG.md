@@ -1,3 +1,7 @@
+#### 2.0.7-quality.8
+
+* Exclude Android VPN clients from TPROXY before they connect, including their initial DNS and server connections.
+
 #### 2.0.7-quality.7
 
 * Route TPROXY's upstream traffic and system DNS through the Android VPN when it covers Throne.
