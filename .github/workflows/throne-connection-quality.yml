@@ -96,7 +96,8 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         with:
-          tasks: app:testOssDebugUnitTest app:assembleOssRelease
+          # Both variants export Room schemas to the same directory.
+          tasks: app:testOssDebugUnitTest app:assembleOssRelease --max-workers=1
           channel: stable
           build-number: '999'
           sign: ${{ steps.signing.outputs.configured }}
