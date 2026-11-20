@@ -1,4 +1,4 @@
-name: Throne connection quality prerelease
+name: Throne connection quality release
 on:
   push:
     branches: [throne-connection-quality]
@@ -6,15 +6,71 @@ on:
       - Throne-connection-quality.patch
       - .github/workflows/throne-connection-quality.yml
 
+concurrency:
+  group: throne-connection-quality-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
+
+env:
+  THRONE_RELEASE_SIGNER: 16ae8140f4e64e5cd4819a0c06365a55e938e2f1a396ea7fab71efed2cd8e6dd
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Check release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^VERSION_NAME=//p' ThroneForAndroid/nb4a.properties)
+          test -n "$version"
+          tag="v$version"
+          printf 'tag=%s\nversion=%s\n' "$tag" "$version" >> "$GITHUB_OUTPUT"
+          existing_tag=$(git ls-remote --tags origin "refs/tags/$tag")
+          if [ -z "$existing_tag" ]; then
+            echo 'status=new' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --depth 1 origin "refs/tags/$tag"
+          tagged_patch=$(git rev-parse 'FETCH_HEAD^{commit}:Throne-connection-quality.patch')
+          test "$tagged_patch" = "$(git hash-object Throne-connection-quality.patch)"
+          if gh release view "$tag" --json isPrerelease,isDraft --jq '(.isPrerelease or .isDraft) | not' | grep -qx true; then
+            echo 'status=published' >> "$GITHUB_OUTPUT"
+          else
+            echo 'status=existing' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Throne release signing key
+        if: steps.release.outputs.status != 'published'
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          : "${SIGNING_KEYSTORE_B64:?Set the SIGNING_KEYSTORE_B64 Actions secret to the Throne Fork Release keystore}"
+          : "${SIGNING_STORE_PASSWORD:?Set the SIGNING_STORE_PASSWORD Actions secret}"
+          : "${SIGNING_KEY_ALIAS:?Set the SIGNING_KEY_ALIAS Actions secret}"
+
+          keystore=$(mktemp)
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$SIGNING_KEYSTORE_B64" | base64 --decode --ignore-garbage > "$keystore"
+          actual=$(keytool -exportcert -keystore "$keystore" -storepass:env SIGNING_STORE_PASSWORD \
+            -alias "$SIGNING_KEY_ALIAS" | sha256sum | cut -d ' ' -f 1)
+          if [ "$actual" != "$THRONE_RELEASE_SIGNER" ]; then
+            echo '::error::The configured keystore does not match the certificate of the published Throne Fork Release APK.'
+            exit 1
+          fi
+
       - name: Apply modifications to Throne v2.0.7
+        if: steps.release.outputs.status != 'published'
         run: |
           set -euo pipefail
           cp Throne-connection-quality.patch "$RUNNER_TEMP/throne.patch"
@@ -22,22 +78,47 @@ jobs:
           git switch --detach FETCH_HEAD
           git apply --check "$RUNNER_TEMP/throne.patch"
           git apply "$RUNNER_TEMP/throne.patch"
-      - uses: ./.github/actions/android-build
+
+      - name: Test and build signed release APKs
+        if: steps.release.outputs.status != 'published'
+        uses: ./.github/actions/android-build
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         with:
-          tasks: app:testOssDebugUnitTest app:assembleOssDebug
+          tasks: app:testOssDebugUnitTest app:assembleOssRelease
           channel: stable
           build-number: '999'
-      - name: Publish APKs
+          sign: 'true'
+
+      - name: Publish signed release as Latest
+        if: steps.release.outputs.status != 'published'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          STATUS: ${{ steps.release.outputs.status }}
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^VERSION_NAME=//p' nb4a.properties)
-          tag="v$version"
-          mkdir -p dist
-          cp app/build/outputs/apk/oss/debug/*.apk dist/
-          (cd dist && sha256sum *.apk > SHA256SUMS)
-          bash buildScript/release_notes.sh "$version" > "$RUNNER_TEMP/release.md"
-          printf '\nThe test APKs use the Android debug signing key.\n' >> "$RUNNER_TEMP/release.md"
-          gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease --title "Throne $tag" --notes-file "$RUNNER_TEMP/release.md"
+          python3 buildScript/release_assets.py app/build/outputs/apk/oss/release dist stable
+          jq -e --arg signer "$THRONE_RELEASE_SIGNER" --arg version "$VERSION" \
+            '.signerSha256 == $signer and .versionName == $version' dist/throne-update.json >/dev/null
+          bash buildScript/release_notes.sh "$VERSION" > "$RUNNER_TEMP/release.md"
+
+          if [ "$STATUS" = existing ]; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --prerelease=false --draft=false --latest --notes-file "$RUNNER_TEMP/release.md"
+          else
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --latest \
+              --title "Throne $TAG" --notes-file "$RUNNER_TEMP/release.md"
+          fi
+
+          gh api "repos/$GH_REPO/releases/latest" | jq -e --arg tag "$TAG" \
+            --slurpfile update dist/throne-update.json '
+            .tag_name == $tag and .prerelease == false and .draft == false and
+            (.assets as $published | all($update[0].assets[]; . as $apk |
+              any($published[]; .name == $apk.name and .digest == ("sha256:" + $apk.sha256))))
+            ' >/dev/null
