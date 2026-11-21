@@ -172,7 +172,6 @@
     </plurals>
     <string name="undo">Urungkan</string>
     <string name="connecting">Menghubungkan…</string>
-    <string name="vpn_connected">Terhubung, ketuk untuk memeriksa koneksi</string>
     <string name="not_connected">Tidak terhubung</string>
     <string name="subscriptions">Langganan</string>
     <string name="cleartext_http_warning">Lalu lintas HTTP teks biasa tidak aman</string>

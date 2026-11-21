@@ -60,6 +60,7 @@ import io.nekohasekai.sagernet.utils.AppShortcuts
 import io.nekohasekai.sagernet.utils.PlatformNotifications
 import io.nekohasekai.sagernet.utils.Theme
 import io.nekohasekai.sagernet.utils.WifiStateAccess
+import io.nekohasekai.sagernet.widget.applyInsetMargin
 import io.nekohasekai.sagernet.widget.bars
 import androidx.lifecycle.lifecycleScope
 import androidx.drawerlayout.widget.DrawerLayout
@@ -99,6 +100,7 @@ class MainActivity : ThemedActivity(),
 
         binding = LayoutMainBinding.inflate(layoutInflater)
         binding.fab.initProgress(binding.fabProgress)
+        binding.fab.applyInsetMargin(bottom = true)
         navigation = binding.navView
         navigation.setNavigationItemSelectedListener(this)
         val drawer = binding.navDrawer

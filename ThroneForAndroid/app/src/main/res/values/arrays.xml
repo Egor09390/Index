@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
 
     <string-array name="language_entries">
@@ -12,7 +12,7 @@
         <item>繁體中文</item>
     </string-array>
     <string-array name="language_values">
-        <item></item>
+        <item/>
         <item>en</item>
         <item>ja</item>
         <item>ko</item>
@@ -164,7 +164,7 @@
     </string-array>
 
     <string-array name="utls_fingerprint_entry">
-        <item></item>
+        <item/>
         <item>chrome</item>
         <item>firefox</item>
         <item>edge</item>
@@ -191,33 +191,33 @@
     <!-- Snell Protocol -->
 
     <string-array name="snell_obfs_modes_entry">
-        <item>None</item>
+        <item>Нет</item>
         <item>HTTP</item>
         <item>TLS</item>
     </string-array>
 
     <string-array name="snell_obfs_modes_value">
-        <item></item>
+        <item/>
         <item>http</item>
         <item>tls</item>
     </string-array>
 
     <string-array name="snell_network_entry">
-        <item>Auto</item>
+        <item>Автоматически</item>
         <item>TCP</item>
         <item>UDP</item>
     </string-array>
 
     <string-array name="snell_network_value">
-        <item></item>
+        <item/>
         <item>tcp</item>
         <item>udp</item>
     </string-array>
 
     <string-array name="snell_v6_modes_entry">
-        <item>Default</item>
-        <item>Unshaped</item>
-        <item>Unsafe Raw</item>
+        <item>По умолчанию</item>
+        <item>Без формирования трафика</item>
+        <item>Небезопасный Raw</item>
     </string-array>
 
     <string-array name="snell_v6_modes_value">
@@ -260,7 +260,7 @@
         <item>xtls-rprx-vision</item>
     </string-array>
     <string-array name="vless_flow_value" translatable="false">
-        <item></item>
+        <item/>
         <item>xtls-rprx-vision</item>
     </string-array>
     <string-array name="xray_flow_entry" translatable="false">
@@ -269,12 +269,12 @@
         <item>xtls-rprx-vision-udp443</item>
     </string-array>
     <string-array name="xray_flow_value" translatable="false">
-        <item></item>
+        <item/>
         <item>xtls-rprx-vision</item>
         <item>xtls-rprx-vision-udp443</item>
     </string-array>
     <string-array name="packet_encoding_value" translatable="false">
-        <item></item>
+        <item/>
         <item>packetaddr</item>
         <item>xudp</item>
     </string-array>
@@ -345,7 +345,7 @@
         <item>BASE64</item>
     </string-array>
     <string-array name="hysteria_auth_type_value" translatable="false">
-        <item></item>
+        <item/>
         <item>STRING</item>
         <item>BASE64</item>
     </string-array>
@@ -355,7 +355,7 @@
         <item>gecko</item>
     </string-array>
     <string-array name="hysteria_obfs_type_value" translatable="false">
-        <item></item>
+        <item/>
         <item>salamander</item>
         <item>gecko</item>
     </string-array>
@@ -366,7 +366,7 @@
         <item>aggressive</item>
     </string-array>
     <string-array name="hysteria_bbr_profile_value" translatable="false">
-        <item></item>
+        <item/>
         <item>standard</item>
         <item>conservative</item>
         <item>aggressive</item>
@@ -388,7 +388,7 @@
         <item>bbr</item>
     </string-array>
     <string-array name="congestion_control_value" translatable="false">
-        <item></item>
+        <item/>
         <item>cubic</item>
         <item>new_reno</item>
         <item>bbr</item>
@@ -399,7 +399,7 @@
         <item>quic</item>
     </string-array>
     <string-array name="tuic_udp_relay_mode_value_opt" translatable="false">
-        <item></item>
+        <item/>
         <item>native</item>
         <item>quic</item>
     </string-array>
@@ -434,7 +434,7 @@
         <item>CAA</item>
     </string-array>
     <string-array name="dnstt_record_type_value" translatable="false">
-        <item></item>
+        <item/>
         <item>txt</item>
         <item>null</item>
         <item>cname</item>
@@ -452,7 +452,7 @@
         <item>fanout</item>
     </string-array>
     <string-array name="dnstt_strategy_value" translatable="false">
-        <item></item>
+        <item/>
         <item>round_robin</item>
         <item>failover</item>
         <item>fanout</item>
@@ -464,7 +464,7 @@
         <item>SSH</item>
     </string-array>
     <string-array name="dnstt_backend_value" translatable="false">
-        <item></item>
+        <item/>
         <item>socks</item>
         <item>shadowsocks</item>
         <item>ssh</item>
@@ -493,7 +493,7 @@
         <item>zlib</item>
     </string-array>
     <string-array name="masterdns_compression_value" translatable="false">
-        <item></item>
+        <item/>
         <item>off</item>
         <item>zstd</item>
         <item>lz4</item>
@@ -511,7 +511,7 @@
         <item>least_loss_top_round_robin</item>
     </string-array>
     <string-array name="masterdns_strategy_value" translatable="false">
-        <item></item>
+        <item/>
         <item>round_robin</item>
         <item>random</item>
         <item>least_loss</item>
@@ -534,7 +534,7 @@
         <item>MULTIPLEXING_HIGH</item>
     </string-array>
     <string-array name="mieru_multiplexing_value" translatable="false">
-        <item></item>
+        <item/>
         <item>MULTIPLEXING_OFF</item>
         <item>MULTIPLEXING_LOW</item>
         <item>MULTIPLEXING_MIDDLE</item>
@@ -560,7 +560,7 @@
         <item>TCP</item>
     </string-array>
     <string-array name="openvpn_network_value" translatable="false">
-        <item></item>
+        <item/>
         <item>udp</item>
         <item>tcp</item>
     </string-array>
@@ -574,7 +574,7 @@
         <item>Fortinet</item>
     </string-array>
     <string-array name="openconnect_flavor_value" translatable="false">
-        <item></item>
+        <item/>
         <item>anyconnect</item>
         <item>nc</item>
         <item>gp</item>
@@ -612,7 +612,7 @@
         <item>prefer_ipv6</item>
     </string-array>
     <string-array name="domain_strategy_values" translatable="false">
-        <item></item>
+        <item/>
         <item>ipv4_only</item>
         <item>ipv6_only</item>
         <item>prefer_ipv4</item>
@@ -716,7 +716,7 @@
         <item>reply</item>
     </string-array>
     <string-array name="route_rule_reject_method_values" translatable="false">
-        <item></item>
+        <item/>
         <item>default</item>
         <item>drop</item>
         <item>reply</item>
@@ -728,7 +728,7 @@
         <item>icmp</item>
     </string-array>
     <string-array name="route_rule_network_values" translatable="false">
-        <item></item>
+        <item/>
         <item>tcp</item>
         <item>udp</item>
         <item>icmp</item>
@@ -754,7 +754,7 @@
         <item>ntp</item>
     </string-array>
     <string-array name="route_rule_protocol_values" translatable="false">
-        <item></item>
+        <item/>
         <item>http</item>
         <item>tls</item>
         <item>quic</item>
@@ -772,7 +772,7 @@
         <item>IPv6</item>
     </string-array>
     <string-array name="route_rule_ip_version_values" translatable="false">
-        <item></item>
+        <item/>
         <item>4</item>
         <item>6</item>
     </string-array>
@@ -800,8 +800,8 @@
 
     <!-- auto selector -->
     <string-array name="autosel_balance_modes">
-        <item>Rotate on a timer (keeps sessions stable)</item>
-        <item>Per connection (widest spread)</item>
+        <item>Ротация по таймеру (стабильные сессии)</item>
+        <item>По соединению (максимальное распределение)</item>
     </string-array>
     <string-array name="autosel_balance_mode_values" translatable="false">
         <item>rotate</item>

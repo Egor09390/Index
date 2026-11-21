@@ -170,7 +170,6 @@
     </plurals>
     <string name="undo">Rückgängig</string>
     <string name="connecting">Verbinde…</string>
-    <string name="vpn_connected">Verbunden, zum Prüfen der Verbindung tippen</string>
     <string name="not_connected">Nicht verbunden</string>
     <string name="subscriptions">Abonnements</string>
     <string name="cleartext_http_warning">Unverschlüsselter HTTP-Datenverkehr ist unsicher</string>

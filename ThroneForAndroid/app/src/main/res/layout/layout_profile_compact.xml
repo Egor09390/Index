@@ -105,13 +105,6 @@
                 android:visibility="gone"
                 tools:text="67/100" />
 
-            <androidx.appcompat.widget.AppCompatImageView
-                android:id="@+id/edit"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:visibility="gone"
-                app:srcCompat="@drawable/ic_image_edit" />
-
             <LinearLayout
                 android:id="@+id/share"
                 android:layout_width="wrap_content"

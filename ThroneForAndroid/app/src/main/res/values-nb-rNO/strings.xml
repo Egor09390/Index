@@ -94,7 +94,6 @@
     <string name="no_proxies_found">Ingen fullmakter ble funnet i lenken</string>
     <string name="error_title">Feil</string>
     <string name="cleartext_http_warning">Klartekst HTTP -trafikk er usikker</string>
-    <string name="vpn_connected">Tilkoblet, trykk for å kontrollere tilkoblingen</string>
     <plurals name="added">
         <item quantity="one">La til</item>
         <item quantity="other">%d fullmakter lagt til</item>

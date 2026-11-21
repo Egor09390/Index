@@ -26,6 +26,7 @@ import com.google.android.material.bottomappbar.BottomAppBar
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.shape.ShapeAppearancePathProvider
+import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.database.DataStore
@@ -56,11 +57,9 @@ class StatsBar @JvmOverloads constructor(
         HideAfterStart,
     }
 
-    private lateinit var statusText: TextView
     private lateinit var txText: TextView
     private lateinit var rxText: TextView
     private var exitText: TextView? = null
-    private var statusLine: CharSequence = ""
     private var stateReported = false
     private val exitListener = { showExit() }
     @Suppress("unused")
@@ -92,7 +91,7 @@ class StatsBar @JvmOverloads constructor(
 
     init {
         alpha = 0f
-        // Replaces the rectangular content ripple and stats_focus, which also filled the FAB cradle (#92).
+        // Use the bar outline as the ripple and focus mask.
         (background as? MaterialShapeDrawable)?.let { shape ->
             val highlight = MaterialColors.getColor(this, R.attr.colorControlHighlight, 0x33FFFFFF)
             val stroke = MaterialColors.getColor(this, R.attr.whiteOrTextPrimary, 0xFFFFFFFF.toInt())
@@ -136,9 +135,7 @@ class StatsBar @JvmOverloads constructor(
         }
     }
 
-    // The ripple renders its mask once and keeps it until invalidated. A cradle animation (FAB hide/show interpolation,
-    // offsets) invalidates the background shape, so that drops the ripple's mask too; the mask is only redrawn while a
-    // ripple shows.
+    // A background shape change also invalidates the ripple mask.
     override fun invalidateDrawable(drawable: Drawable) {
         super.invalidateDrawable(drawable)
         if (drawable === background) foreground?.invalidateSelf()
@@ -146,7 +143,6 @@ class StatsBar @JvmOverloads constructor(
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        // BottomAppBar places the cradle here, not always through an invalidation of the shape.
         foreground?.invalidateSelf()
         val transition = pendingTransition
         if (transition != null) {
@@ -158,7 +154,6 @@ class StatsBar @JvmOverloads constructor(
     }
 
     override fun setOnClickListener(l: OnClickListener?) {
-        statusText = findViewById(R.id.status)
         txText = findViewById(R.id.tx)
         rxText = findViewById(R.id.rx)
         exitText = findViewById(R.id.exit_country)
@@ -176,17 +171,6 @@ class StatsBar @JvmOverloads constructor(
         if (ExitIp.listener === exitListener) ExitIp.listener = null
         if ((context as? Activity)?.isChangingConfigurations != true) ExitIp.clear()
         super.onDetachedFromWindow()
-    }
-
-    private fun setStatus(text: CharSequence) {
-        statusLine = text
-        statusText.text = text
-        updateTooltip()
-    }
-
-    private fun updateTooltip() {
-        val exit = exitText?.takeIf { it.isVisible }?.contentDescription
-        TooltipCompat.setTooltipText(this, if (exit == null) statusLine else "$statusLine\n$exit")
     }
 
     /**
@@ -215,7 +199,7 @@ class StatsBar @JvmOverloads constructor(
             view.contentDescription = country
             view.isVisible = true
         }
-        updateTooltip()
+        TooltipCompat.setTooltipText(this, view.takeIf { it.isVisible }?.contentDescription)
     }
 
     // On TV the bar stays put: it holds the URL test and must stay reachable by D-pad.
@@ -378,20 +362,7 @@ class StatsBar @JvmOverloads constructor(
         }
         stateReported = true
         showExit()
-        if (state == BaseService.State.Connected) {
-            setStatus(app.getText(R.string.vpn_connected))
-        } else {
-            updateSpeed(0, 0)
-            setStatus(
-                context.getText(
-                    when (state) {
-                        BaseService.State.Connecting -> R.string.connecting
-                        BaseService.State.Stopping -> R.string.stopping
-                        else -> R.string.not_connected
-                    }
-                )
-            )
-        }
+        if (!state.connected) updateSpeed(0, 0)
     }
 
     @SuppressLint("SetTextI18n")
@@ -411,39 +382,31 @@ class StatsBar @JvmOverloads constructor(
     fun testConnection() {
         val activity = context as MainActivity
         isEnabled = false
-        setStatus(app.getText(R.string.connection_test_testing))
+        val testing = activity.snackbar(R.string.connection_test_testing).setDuration(Snackbar.LENGTH_INDEFINITE)
+        testing.show()
         runOnDefaultDispatcher {
-            try {
+            val message = try {
                 val elapsed = activity.urlTest()
-                onMainDispatcher {
-                    isEnabled = true
-                    setStatus(
-                        if (elapsed == ProxyEntity.LATENCY_CONNECT_ONLY) {
-                            app.getText(R.string.test_connect_ok)
+                if (elapsed == ProxyEntity.LATENCY_CONNECT_ONLY) {
+                    app.getText(R.string.test_connect_ok)
+                } else {
+                    app.getString(
+                        if (DataStore.testUrl.startsWith("https://")) {
+                            R.string.connection_test_available
                         } else {
-                            app.getString(
-                                if (DataStore.testUrl.startsWith("https://")) {
-                                    R.string.connection_test_available
-                                } else {
-                                    R.string.connection_test_available_http
-                                }, elapsed
-                            )
-                        }
+                            R.string.connection_test_available_http
+                        },
+                        elapsed,
                     )
                 }
-
             } catch (e: Exception) {
                 Logs.w(e.toString())
-                onMainDispatcher {
-                    isEnabled = true
-                    setStatus(app.getText(R.string.connection_test_testing))
-
-                    activity.snackbar(
-                        app.getString(
-                            R.string.connection_test_error, e.readableMessage
-                        )
-                    ).show()
-                }
+                app.getString(R.string.connection_test_error, e.readableMessage)
+            }
+            onMainDispatcher {
+                isEnabled = true
+                testing.dismiss()
+                activity.snackbar(message).show()
             }
             // After the test, not beside it: one request at a time through the running connection.
             onMainDispatcher { ExitIp.refresh() }
@@ -452,7 +415,7 @@ class StatsBar @JvmOverloads constructor(
 
 }
 
-/** The bar background's live outline (cradle included) for the same bounds. */
+/** The bar background's live outline for the same bounds. */
 private class BarOutline(private val shape: MaterialShapeDrawable) {
     private val provider = ShapeAppearancePathProvider()
     private val rect = RectF()

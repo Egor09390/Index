@@ -142,7 +142,6 @@
     <string name="add_profile_methods_manual_settings">手動設定</string>
     <string name="undo">元に戻す</string>
     <string name="connecting">接続中…</string>
-    <string name="vpn_connected">接続済み、タップして接続を確認</string>
     <string name="not_connected">未接続</string>
     <string name="subscriptions">サブスクリプション</string>
     <string name="cleartext_http_warning">平文の HTTP トラフィックは安全ではありません</string>

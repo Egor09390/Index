@@ -1403,7 +1403,6 @@
     <string name="vless_encryption_hint">mlkem768x25519plus.native.0rtt.KEY1.KEY2...</string>
     <string name="vmess_authenticated_length">Аўтэнтыфікаваная даўжыня</string>
     <string name="vmess_global_padding">Глабальнае запаўненне</string>
-    <string name="vpn_connected">Падлучана, націсніце, каб праверыць злучэнне</string>
     <string name="vpn_dialog_copy_command">Скапіяваць каманду</string>
     <string name="vpn_dialog_missing_message">У гэтай прылады няма экрана для пацвярджэння доступу да VPN, таму Throne не можа папрасіць яго. Дазволіце яго адзін раз праз adb:\n\nadb shell appops set %1$s ACTIVATE_VPN allow\n\nабо пераключыце рэжым сэрвісу на «Толькі проксі».</string>
     <string name="vpn_dialog_missing_title">Пацвярджэнне VPN недаступна</string>

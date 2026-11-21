@@ -192,12 +192,12 @@ fun Project.setupApp() {
             }
         }
 
-        // Throne-<versionName>[-<flavor>]-<abi>[-<buildType>][-unsigned].apk; oss release = Throne-<versionName>-<abi>.apk
+        // Ultra-<versionName>[-<flavor>]-<abi>[-<buildType>][-unsigned].apk; oss release = Ultra-<versionName>-<abi>.apk
         applicationVariants.all {
             val variant = this
             outputs.all {
                 this as BaseVariantOutputImpl
-                outputFileName = "Throne-${variant.versionName}" + outputFileName.removePrefix(project.name)
+                outputFileName = "Ultra-${variant.versionName}" + outputFileName.removePrefix(project.name)
                     .replace("-release", "")
                     .replace("-oss", "")
             }

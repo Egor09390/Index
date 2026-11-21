@@ -151,7 +151,6 @@
     <!-- tasker -->
     <!-- status -->
     <string name="connecting">در حال اتصال...</string>
-    <string name="vpn_connected">متصل شد! برای بررسی اتصال، اینجا کلیک کنید.</string>
     <string name="not_connected">وصل نیست</string>
     <!-- subscriptions -->
     <string name="subscriptions">اشتراک‌ها</string>

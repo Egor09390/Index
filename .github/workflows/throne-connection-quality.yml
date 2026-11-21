@@ -4,6 +4,7 @@ on:
     branches: [throne-connection-quality]
     paths:
       - Throne-connection-quality.patch
+      - Throne-russian-default.patch
       - .github/workflows/throne-connection-quality.yml
 
 concurrency:
@@ -40,8 +41,10 @@ jobs:
           fi
 
           git fetch --depth 1 origin "refs/tags/$tag"
-          tagged_patch=$(git rev-parse 'FETCH_HEAD^{commit}:Throne-connection-quality.patch')
-          test "$tagged_patch" = "$(git hash-object Throne-connection-quality.patch)"
+          for patch in Throne-connection-quality.patch Throne-russian-default.patch; do
+            tagged_patch=$(git rev-parse "FETCH_HEAD^{commit}:$patch")
+            test "$tagged_patch" = "$(git hash-object "$patch")"
+          done
           if gh release view "$tag" --json isPrerelease,isDraft --jq '(.isPrerelease or .isDraft) | not' | grep -qx true; then
             echo 'status=published' >> "$GITHUB_OUTPUT"
           else
@@ -79,11 +82,13 @@ jobs:
         if: steps.release.outputs.status != 'published'
         run: |
           set -euo pipefail
-          cp Throne-connection-quality.patch "$RUNNER_TEMP/throne.patch"
+          cp Throne-connection-quality.patch Throne-russian-default.patch "$RUNNER_TEMP/"
           git fetch --depth 1 https://github.com/throneproj/ThroneForAndroid.git 0f3c1ca18e8af5b437d95aa0b0f36d1d5eedab51
           git switch --detach FETCH_HEAD
-          git apply --check "$RUNNER_TEMP/throne.patch"
-          git apply "$RUNNER_TEMP/throne.patch"
+          for patch in Throne-connection-quality.patch Throne-russian-default.patch; do
+            git apply --check "$RUNNER_TEMP/$patch"
+            git apply "$RUNNER_TEMP/$patch"
+          done
           # The previous signed builds use the existing .debug application ID.
           sed -i "s/^PACKAGE_NAME=.*/PACKAGE_NAME=$THRONE_RELEASE_PACKAGE/" nb4a.properties
 

@@ -2,6 +2,9 @@
 
 * Reduce the VPN button and its airplane icon to 80% of the previous size.
 * Narrow the drawer, center its menu above the system navigation bar, and round the selected item's highlight.
+* Keep the VPN button in place as the connection changes and remove the status hint from the stats bar.
+* Place editing in the profile overflow menu and refine the add-profile icon.
+* Rename the app to Ultra and use Russian for the default client text.
 
 #### 2.0.7-quality.17
 

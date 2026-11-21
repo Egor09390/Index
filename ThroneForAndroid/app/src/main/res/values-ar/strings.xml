@@ -176,7 +176,6 @@
     <string name="cleartext_http_warning">حركة مرور نص واضح HTTP غير آمنة</string>
     <string name="subscriptions">الاشتراكات</string>
     <string name="not_connected">غير متصل</string>
-    <string name="vpn_connected">متصل، انقر للتحقق من الاتصال</string>
     <string name="connecting">يتصل…</string>
     <string name="undo">تراجع</string>
     <plurals name="added">

@@ -128,7 +128,6 @@
     <string name="cleartext_http_warning">Düz metin HTTP trafiği güvenli değil</string>
     <string name="subscriptions">Abonelikler</string>
     <string name="not_connected">Bağlanmadı</string>
-    <string name="vpn_connected">Bağlandı, bağlantıyı test etmek için dokunun</string>
     <string name="connecting">Bağlanıyor…</string>
     <string name="undo">Geri Al</string>
     <plurals name="added">

@@ -170,7 +170,6 @@
     </plurals>
     <string name="undo">Annulla</string>
     <string name="connecting">Connessione in corso…</string>
-    <string name="vpn_connected">Connesso, tocca per verificare la connessione</string>
     <string name="not_connected">Non connesso</string>
     <string name="subscriptions">Abbonamenti</string>
     <string name="cleartext_http_warning">Il traffico HTTP in chiaro non è sicuro</string>

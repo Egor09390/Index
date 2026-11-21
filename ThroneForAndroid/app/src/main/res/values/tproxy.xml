@@ -1,10 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="service_mode_tproxy">TPROXY (root)</string>
-    <string name="tproxy_start_failed">TPROXY could not start: %s</string>
-    <string name="tproxy_stopped">The root TPROXY process stopped.</string>
-    <string name="tproxy_no_ingress">TPROXY requires the generated local mixed inbound at 127.0.0.1 or ::.</string>
-    <string name="tproxy_root_denied">Grant Throne root access in your root manager and try again.</string>
-    <string name="tproxy_root_timeout">The root process did not respond. Check access in your root manager.</string>
-    <string name="tproxy_stop_timeout">The TPROXY process did not stop in time.</string>
+    <string name="tproxy_start_failed">Не удалось запустить TPROXY: %s</string>
+    <string name="tproxy_stopped">Процесс TPROXY с root остановился.</string>
+    <string name="tproxy_no_ingress">TPROXY нужен локальный смешанный вход на 127.0.0.1 или ::.</string>
+    <string name="tproxy_root_denied">Выдай Throne root-доступ в менеджере root и повтори.</string>
+    <string name="tproxy_root_timeout">Процесс с root не ответил. Проверь доступ в менеджере root.</string>
+    <string name="tproxy_stop_timeout">Процесс TPROXY не завершился вовремя.</string>
 </resources>

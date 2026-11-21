@@ -141,7 +141,6 @@
     <string name="add_profile_methods_manual_settings">수동 설정</string>
     <string name="undo">실행 취소</string>
     <string name="connecting">연결 중…</string>
-    <string name="vpn_connected">연결됨, 탭하여 연결 확인</string>
     <string name="not_connected">연결되지 않음</string>
     <string name="subscriptions">구독</string>
     <string name="cleartext_http_warning">평문 HTTP 트래픽은 안전하지 않습니다</string>

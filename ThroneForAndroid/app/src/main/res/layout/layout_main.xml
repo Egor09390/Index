@@ -19,37 +19,6 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        <!-- We double trackThickness as half of it will be invisible -->
-        <com.google.android.material.progressindicator.CircularProgressIndicator
-            android:id="@+id/fabProgress"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:max="1"
-            android:visibility="invisible"
-            app:indicatorColor="?primaryOrTextSecondary"
-            app:layout_anchor="@+id/fab"
-            app:layout_anchorGravity="center"
-            app:layout_behavior="io.nekohasekai.sagernet.widget.FabProgressBehavior"
-            app:trackCornerRadius="@dimen/mtrl_progress_track_thickness"
-            app:trackThickness="8dp" />
-
-        <!-- Anchored to the bar, the FAB must not dodge snackbars: the dodge offset fights the anchor and
-             strands the FAB over the bar's status line (#47). "top" only because "none" becomes bottom. -->
-        <io.nekohasekai.sagernet.widget.ServiceButton
-            android:id="@+id/fab"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:elevation="6dp"
-            android:foreground="@drawable/fab_focus_ring"
-            android:nextFocusDown="@+id/stats"
-            app:backgroundTint="?colorPrimary"
-            app:fabCustomSize="67.2dp"
-            app:layout_anchor="@id/stats"
-            app:layout_dodgeInsetEdges="top"
-            app:maxImageSize="28.8dp"
-            app:pressedTranslationZ="6dp"
-            app:srcCompat="@drawable/ic_service_idle" />
-
         <io.nekohasekai.sagernet.widget.StatsBar
             android:id="@+id/stats"
             android:layout_width="match_parent"
@@ -64,6 +33,35 @@
             <include layout="@layout/layout_stats_bar_content" />
 
         </io.nekohasekai.sagernet.widget.StatsBar>
+
+        <!-- We double trackThickness as half of it will be invisible -->
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:id="@+id/fabProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:max="1"
+            android:visibility="invisible"
+            app:indicatorColor="?primaryOrTextSecondary"
+            app:layout_anchor="@+id/fab"
+            app:layout_anchorGravity="center"
+            app:layout_behavior="io.nekohasekai.sagernet.widget.FabProgressBehavior"
+            app:trackCornerRadius="@dimen/mtrl_progress_track_thickness"
+            app:trackThickness="8dp" />
+
+        <io.nekohasekai.sagernet.widget.ServiceButton
+            android:id="@+id/fab"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="24dp"
+            android:elevation="6dp"
+            android:foreground="@drawable/fab_focus_ring"
+            android:nextFocusDown="@+id/stats"
+            app:backgroundTint="?colorPrimary"
+            app:fabCustomSize="67.2dp"
+            app:maxImageSize="28.8dp"
+            app:pressedTranslationZ="6dp"
+            app:srcCompat="@drawable/ic_service_idle" />
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 

@@ -170,7 +170,6 @@
     </plurals>
     <string name="undo">Deshacer</string>
     <string name="connecting">Conectando…</string>
-    <string name="vpn_connected">Conectado, toque para verificar la conexión</string>
     <string name="not_connected">No conectado</string>
     <string name="subscriptions">Suscripciones</string>
     <string name="cleartext_http_warning">El tráfico HTTP de texto claro no es seguro</string>

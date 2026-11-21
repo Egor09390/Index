@@ -105,7 +105,6 @@
     <!-- tasker -->
     <!-- status -->
     <string name="connecting">正在連線…</string>
-    <string name="vpn_connected">已連線，輕觸以檢查連線能力</string>
     <string name="not_connected">未連線</string>
     <!-- subscriptions -->
     <string name="subscriptions">訂閱</string>

@@ -61,10 +61,8 @@ class ProfileItemMenu(private val host: ConfigurationFragment) {
         val popup = PopupMenu(anchor.context, anchor)
         popup.menuInflater.inflate(R.menu.double_column_item_menu, popup.menu)
         val menu = popup.menu
-        // the compact card and the compact row have no edit / share buttons
-        val noButtons = adapter.isCompact || adapter.isCompactRow
-        menu.findItem(R.id.action_edit).isVisible = noButtons
-        menu.findItem(R.id.action_share).isVisible = noButtons
+        // The compact card and row provide sharing through this menu.
+        menu.findItem(R.id.action_share).isVisible = adapter.isCompact || adapter.isCompactRow
         val pinned = adapter.isPinned(profile.id)
         menu.findItem(R.id.action_pin).setTitle(if (pinned) R.string.profiles_unpin else R.string.profiles_pin)
         // TV only, where a D-pad cannot drag; a filtered list says nothing about the stored order. Never across the pinned edge.

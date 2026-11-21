@@ -230,7 +230,6 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
     private val card = view as MaterialCardView
     private val selectCheck: CheckBox = view.findViewById(R.id.select_check)
     private val name: TextView = view.findViewById(R.id.profile_name)
-    private val editButton: View = view.findViewById(R.id.edit)
     private val shareButton: View = view.findViewById(R.id.share)
     private val moreButton: View = view.findViewById(R.id.more)
     private val address: TextView = view.findViewById(R.id.profile_address)
@@ -268,9 +267,6 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
         view.setOnLongClickListener { v ->
             val profile = boundProfile
             profile != null && adapter.host?.onRowLongClick(this, profile, v.isInTouchMode) == true
-        }
-        editButton.setOnClickListener {
-            boundProfile?.let { adapter.host?.itemMenu?.edit(it, adapter.group) }
         }
         shareButton.setOnClickListener { button ->
             boundProfile?.let { adapter.host?.itemMenu?.showShare(button, it) }
@@ -337,7 +333,7 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
         placeholder = true
         name.text = ""
         type.text = ""
-        for (view in arrayOf(address, result, qualityScore, testProgress, traffic, error, selectCheck, editButton, shareButton, moreButton, pinIcon)) {
+        for (view in arrayOf(address, result, qualityScore, testProgress, traffic, error, selectCheck, shareButton, moreButton, pinIcon)) {
             view.isVisible = false
         }
         applyCardColors(selected = false, checked = false)
@@ -368,7 +364,6 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
         val buttons = !host.select && !selecting
         selectCheck.isVisible = selecting
         selectCheck.isChecked = selecting && host.selection.isChecked(id)
-        editButton.isVisible = buttons && !adapter.isCompact && !adapter.isCompactRow
         shareButton.isVisible = buttons && !adapter.isCompact && !adapter.isCompactRow
         moreButton.isVisible = buttons
         applyCardColors(host.isSelectedProfile(id), selectCheck.isChecked)
