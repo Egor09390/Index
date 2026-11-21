@@ -101,6 +101,7 @@ class MainActivity : ThemedActivity(),
         binding = LayoutMainBinding.inflate(layoutInflater)
         binding.fab.initProgress(binding.fabProgress)
         binding.fab.applyInsetMargin(bottom = true)
+        binding.stats.bindVpnButton(binding.fab)
         navigation = binding.navView
         navigation.setNavigationItemSelectedListener(this)
         val drawer = binding.navDrawer

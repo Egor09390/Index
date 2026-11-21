@@ -748,6 +748,8 @@
     <string name="direct_test_url_sum">Запрашивается без какого-либо прокси, чтобы отличать обрыв связи от отказа серверов. Пусто — используется состояние сети системы.</string>
     <string name="direct_test_url_empty">состояние сети системы</string>
     <string name="cag_exit_country">Страна выхода</string>
+    <string name="exit_country_us_short">США</string>
+    <string name="exit_country_description">Страна выхода — %1$s</string>
     <string name="exit_country_lookup">Определять страну выхода</string>
     <string name="exit_country_lookup_sum">После подключения приложение запрашивает через прокси IP-адрес и страну выхода. Если настройка выключена, запросы не отправляются автоматически.</string>
     <string name="exit_lookup_provider">Сервис определения страны</string>

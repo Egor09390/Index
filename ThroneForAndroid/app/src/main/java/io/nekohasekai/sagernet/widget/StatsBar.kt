@@ -16,6 +16,7 @@ import android.graphics.drawable.RippleDrawable
 import android.text.format.Formatter
 import android.util.AttributeSet
 import android.view.View
+import android.view.ViewTreeObserver
 import android.widget.TextView
 import androidx.appcompat.widget.TooltipCompat
 import androidx.coordinatorlayout.widget.CoordinatorLayout
@@ -23,9 +24,11 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.whenStarted
 import com.google.android.material.bottomappbar.BottomAppBar
+import com.google.android.material.bottomappbar.BottomAppBarTopEdgeTreatment
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.shape.ShapeAppearancePathProvider
+import com.google.android.material.shape.ShapePath
 import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.bg.BaseService
@@ -36,6 +39,8 @@ import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.test.TestFormat
 import io.nekohasekai.sagernet.SagerNet
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -60,6 +65,12 @@ class StatsBar @JvmOverloads constructor(
     private lateinit var txText: TextView
     private lateinit var rxText: TextView
     private var exitText: TextView? = null
+    private var vpnButton: ServiceButton? = null
+    private val vpnCradle = VpnButtonCradle(fabCradleMargin, fabCradleRoundedCornerRadius)
+    private val updateCradleOnDraw = ViewTreeObserver.OnPreDrawListener {
+        updateVpnCradle()
+        true
+    }
     private var stateReported = false
     private val exitListener = { showExit() }
     @Suppress("unused")
@@ -93,6 +104,7 @@ class StatsBar @JvmOverloads constructor(
         alpha = 0f
         // Use the bar outline as the ripple and focus mask.
         (background as? MaterialShapeDrawable)?.let { shape ->
+            shape.shapeAppearanceModel = shape.shapeAppearanceModel.toBuilder().setTopEdge(vpnCradle).build()
             val highlight = MaterialColors.getColor(this, R.attr.colorControlHighlight, 0x33FFFFFF)
             val stroke = MaterialColors.getColor(this, R.attr.whiteOrTextPrimary, 0xFFFFFFFF.toInt())
             foreground = RippleDrawable(
@@ -101,6 +113,18 @@ class StatsBar @JvmOverloads constructor(
                 ShapeMaskDrawable(shape),
             )
         }
+    }
+
+    fun bindVpnButton(button: ServiceButton) {
+        vpnButton = button
+    }
+
+    private fun updateVpnCradle() {
+        val button = vpnButton ?: return
+        // The bar moves during its own animation. The button is fixed in their shared parent.
+        val centerY = button.y + button.height / 2f - y
+        val diameter = if (button.isShown) button.height * button.scaleY else 0f
+        if (vpnCradle.update(centerY, diameter)) background?.invalidateSelf()
     }
 
     override fun getBehavior(): YourBehavior {
@@ -162,12 +186,14 @@ class StatsBar @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        viewTreeObserver.addOnPreDrawListener(updateCradleOnDraw)
         ExitIp.listener = exitListener
         showExit()
     }
 
     // A rotation keeps the lookup; a destroyed activity drops it, since the service may restart unseen meanwhile.
     override fun onDetachedFromWindow() {
+        viewTreeObserver.removeOnPreDrawListener(updateCradleOnDraw)
         if (ExitIp.listener === exitListener) ExitIp.listener = null
         if ((context as? Activity)?.isChangingConfigurations != true) ExitIp.clear()
         super.onDetachedFromWindow()
@@ -181,25 +207,23 @@ class StatsBar @JvmOverloads constructor(
         val view = exitText ?: return
         val connected = currentState == BaseService.State.Connected
         val info = ExitIp.info?.takeIf { connected }
-        // A running lookup dims the previous exit, or holds a placeholder when there is none yet.
-        val refreshing = connected && ExitIp.refreshing
-        view.alpha = if (refreshing) 0.5f else 1f
+        view.isVisible = info != null
         if (info == null) {
-            view.text = "…"
+            view.text = null
             view.contentDescription = null
-            view.isVisible = refreshing
         } else {
-            val country = if (TestFormat.isCountryCode(info.countryCode)) {
-                TestFormat.countryName(info.countryCode)
-            } else {
-                info.country
+            val code = info.countryCode
+            val flag = TestFormat.flag(code)
+            val country = if (flag.isEmpty()) info.country else TestFormat.countryName(code)
+            val shortCountry = when {
+                code == "US" -> context.getString(R.string.exit_country_us_short)
+                flag.isNotEmpty() -> code
+                else -> country
             }
-            val flag = TestFormat.flag(info.countryCode)
-            view.text = if (flag.isEmpty()) country else "$flag\u00A0$country"
-            view.contentDescription = country
-            view.isVisible = true
+            view.text = if (flag.isEmpty()) shortCountry else "$flag\u00A0$shortCountry"
+            view.contentDescription = context.getString(R.string.exit_country_description, country)
         }
-        TooltipCompat.setTooltipText(this, view.takeIf { it.isVisible }?.contentDescription)
+        TooltipCompat.setTooltipText(this, view.contentDescription)
     }
 
     // On TV the bar stays put: it holds the URL test and must stay reachable by D-pad.
@@ -413,6 +437,49 @@ class StatsBar @JvmOverloads constructor(
         }
     }
 
+}
+
+/** A round cradle with vertical sides once the bar's top is above the fixed button. */
+private class VpnButtonCradle(
+    private val gap: Float,
+    private val shoulder: Float,
+) : BottomAppBarTopEdgeTreatment(gap, shoulder, 0f) {
+    private var centerY = 0f
+    private var radius = 0f
+
+    fun update(buttonCenterY: Float, diameter: Float): Boolean {
+        val buttonRadius = diameter / 2f + gap
+        val overlaps = diameter > 0f && buttonCenterY > -buttonRadius
+        val nextRadius = if (overlaps) buttonRadius else 0f
+        val nextCenter = if (overlaps) buttonCenterY else 0f
+        if (radius == nextRadius && centerY == nextCenter) return false
+        radius = nextRadius
+        centerY = nextCenter
+        return true
+    }
+
+    override fun getEdgePath(length: Float, center: Float, interpolation: Float, shapePath: ShapePath) {
+        if (radius == 0f) {
+            shapePath.lineTo(length, 0f)
+            return
+        }
+
+        // The shoulders meet the cutout tangentially. After a quarter turn they continue as straight sides.
+        val distanceY = (shoulder - centerY).coerceAtLeast(0f)
+        val distance = radius + shoulder
+        val distanceX = sqrt((distance * distance - distanceY * distanceY).coerceAtLeast(0f))
+        val angle = Math.toDegrees(atan2(distanceX, distanceY).toDouble()).toFloat()
+        val leftShoulder = center - distanceX
+        val rightShoulder = center + distanceX
+
+        shapePath.lineTo(leftShoulder, 0f)
+        shapePath.addArc(leftShoulder - shoulder, 0f, leftShoulder + shoulder, 2f * shoulder, 270f, angle)
+        if (centerY > shoulder) shapePath.lineTo(center - radius, centerY)
+        shapePath.addArc(center - radius, centerY - radius, center + radius, centerY + radius, 90f + angle, -2f * angle)
+        if (centerY > shoulder) shapePath.lineTo(center + radius, shoulder)
+        shapePath.addArc(rightShoulder - shoulder, 0f, rightShoulder + shoulder, 2f * shoulder, 270f - angle, angle)
+        shapePath.lineTo(length, 0f)
+    }
 }
 
 /** The bar background's live outline for the same bounds. */

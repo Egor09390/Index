@@ -1,3 +1,9 @@
+#### 2.0.7-quality.19
+
+* Make the VPN button smaller and restore its cutout in the taller animated stats bar.
+* Hide the app title on the profiles screen.
+* Show a compact exit-country label once lookup finishes.
+
 #### 2.0.7-quality.18
 
 * Reduce the VPN button and its airplane icon to 80% of the previous size.

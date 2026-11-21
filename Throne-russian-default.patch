@@ -493,7 +493,7 @@ index e9b39bc..b49d945 100644
      <string-array name="autosel_balance_mode_values" translatable="false">
          <item>rotate</item>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 98e62fa..f382d53 100644
+index 98e62fa..7647730 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -1,70 +1,68 @@
@@ -782,7 +782,7 @@ index 98e62fa..f382d53 100644
      <string name="action_socks" translatable="false">SOCKS</string>
      <string name="action_http" translatable="false">HTTP</string>
      <string name="action_shadowsocks" translatable="false">Shadowsocks</string>
-@@ -168,2783 +165,2857 @@
+@@ -168,2783 +165,2859 @@
      <string name="action_wireguard" translatable="false">WireGuard</string>
      <string name="action_tuic" translatable="false">TUIC</string>
      <string name="action_juicity" translatable="false">Juicity</string>
@@ -1920,6 +1920,8 @@ index 98e62fa..f382d53 100644
 +    <string name="direct_test_url_sum">Запрашивается без какого-либо прокси, чтобы отличать обрыв связи от отказа серверов. Пусто — используется состояние сети системы.</string>
 +    <string name="direct_test_url_empty">состояние сети системы</string>
 +    <string name="cag_exit_country">Страна выхода</string>
++    <string name="exit_country_us_short">США</string>
++    <string name="exit_country_description">Страна выхода — %1$s</string>
 +    <string name="exit_country_lookup">Определять страну выхода</string>
 +    <string name="exit_country_lookup_sum">После подключения приложение запрашивает через прокси IP-адрес и страну выхода. Если настройка выключена, запросы не отправляются автоматически.</string>
 +    <string name="exit_lookup_provider">Сервис определения страны</string>

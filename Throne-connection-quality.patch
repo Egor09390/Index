@@ -112,10 +112,16 @@ index 28bcdd4..c161e6b 100644
  # python bytecode
  __pycache__/
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..69a32ed 100644
+index 6460f87..e8b238b 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,91 @@
+@@ -1,3 +1,97 @@
++#### 2.0.7-quality.19
++
++* Make the VPN button smaller and restore its cutout in the taller animated stats bar.
++* Hide the app title on the profiles screen.
++* Show a compact exit-country label once lookup finishes.
++
 +#### 2.0.7-quality.18
 +
 +* Reduce the VPN button and its airplane icon to 80% of the previous size.
@@ -3096,7 +3102,7 @@ index 128074e..0000000
 -
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
-index 8887b2e..4d356f4 100644
+index 8887b2e..22e4fce 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/ConfigurationFragment.kt
 @@ -15,7 +15,6 @@ import androidx.annotation.StringRes
@@ -3148,15 +3154,16 @@ index 8887b2e..4d356f4 100644
      override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
          super.onViewCreated(view, savedInstanceState)
          val config = resources.configuration
-@@ -361,6 +347,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -361,6 +347,8 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
              setNavigationIcon(R.drawable.ic_navigation_close, R.string.navigation_close)
              toolbar.setNavigationOnClickListener { requireActivity().finish() }
          } else {
++            toolbar.title = null
 +            toolbar.menu.removeItem(R.id.action_search)
              toolbar.inflateMenu(R.menu.profile_selection_menu)
              TvControls.addServerSwitch(toolbar.menu, R.id.group_profiles_toolbar)
              groupMenu.setUp(toolbar.menu)
-@@ -424,14 +411,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -424,14 +412,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
          }
      }
  
@@ -3171,7 +3178,16 @@ index 8887b2e..4d356f4 100644
      }
  
      override fun onMenuItemClick(item: MenuItem): Boolean {
-@@ -758,16 +741,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+@@ -683,7 +667,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
+                 toolbar.title = resources.getQuantityString(R.plurals.profiles_selected, selection.count, selection.count)
+             } else {
+                 setNavigationIcon(R.drawable.ic_navigation_menu, R.string.navigation_open_drawer)
+-                toolbar.setTitle(R.string.app_name)
++                toolbar.title = null
+             }
+         }
+         if (::pager.isInitialized) pager.isUserInputEnabled = !active
+@@ -758,16 +742,10 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
          lists.forEach { it.adapter.onTestState(state) }
      }
  
@@ -4056,7 +4072,7 @@ index 066aa40..0000000
 -    }
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
-index 650a1a3..c8486f4 100644
+index 650a1a3..73ac52e 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/MainActivity.kt
 @@ -17,10 +17,12 @@ import android.view.ViewGroup
@@ -4106,7 +4122,7 @@ index 650a1a3..c8486f4 100644
      }
  
      lateinit var binding: LayoutMainBinding
-@@ -82,38 +88,40 @@ class MainActivity : ThemedActivity(),
+@@ -82,38 +88,41 @@ class MainActivity : ThemedActivity(),
      private var currentMainFragment: ToolbarFragment? = null
  
      override fun onCreate(savedInstanceState: Bundle?) {
@@ -4142,6 +4158,7 @@ index 650a1a3..c8486f4 100644
 -            binding.drawerLayout.removeView(binding.navView)
 -        }
 +        binding.fab.applyInsetMargin(bottom = true)
++        binding.stats.bindVpnButton(binding.fab)
 +        navigation = binding.navView
          navigation.setNavigationItemSelectedListener(this)
 -        // NavigationView pads its header and menu itself (top/bottom); its side follows side bars and cutouts.
@@ -4171,7 +4188,7 @@ index 650a1a3..c8486f4 100644
          }
          // The drawer's surface runs under the status bar: the icons follow it while the drawer is mostly open.
          binding.drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
-@@ -165,7 +173,6 @@ class MainActivity : ThemedActivity(),
+@@ -165,7 +174,6 @@ class MainActivity : ThemedActivity(),
          if (savedInstanceState == null) intent?.let(::handleImportIntent)
          SubscriptionReportDialog.observe(this)
  
@@ -4179,7 +4196,7 @@ index 650a1a3..c8486f4 100644
  
          if (savedInstanceState == null) {
              firstStart.start()
-@@ -222,13 +229,6 @@ class MainActivity : ThemedActivity(),
+@@ -222,13 +230,6 @@ class MainActivity : ThemedActivity(),
          }
      }
  
@@ -4193,7 +4210,7 @@ index 650a1a3..c8486f4 100644
      override fun onNewIntent(intent: Intent) {
          super.onNewIntent(intent)
  
-@@ -406,20 +406,11 @@ class MainActivity : ThemedActivity(),
+@@ -406,20 +407,11 @@ class MainActivity : ThemedActivity(),
              R.id.nav_group -> displayFragment(GroupFragment())
              R.id.nav_route -> displayFragment(RouteFragment())
              R.id.nav_settings -> displayFragment(SettingsFragment())
@@ -4215,7 +4232,7 @@ index 650a1a3..c8486f4 100644
          return true
      }
  
-@@ -433,7 +424,6 @@ class MainActivity : ThemedActivity(),
+@@ -433,7 +425,6 @@ class MainActivity : ThemedActivity(),
          refreshConfigurationProfileState()
          when (val fragment = currentMainFragment ?: supportFragmentManager.findFragmentById(R.id.fragment_holder)) {
              is RouteFragment -> fragment.onServiceStateChanged()
@@ -4223,7 +4240,7 @@ index 650a1a3..c8486f4 100644
          }
  
          binding.fab.changeState(state, DataStore.serviceState, animate)
-@@ -455,11 +445,7 @@ class MainActivity : ThemedActivity(),
+@@ -455,11 +446,7 @@ class MainActivity : ThemedActivity(),
          if (errorBar?.isShownOrQueued == true && errorShown == message) return
          errorShown = message
          val bar = snackbar(message).setDuration(Snackbar.LENGTH_INDEFINITE)
@@ -4236,7 +4253,7 @@ index 650a1a3..c8486f4 100644
              bar.setAction(R.string.xray_geo_assets_action) {
                  openSettingsScreen(XrayGeoSettingsFragment::class.java.name, getString(R.string.xray_geo_assets))
              }
-@@ -472,7 +458,6 @@ class MainActivity : ThemedActivity(),
+@@ -472,7 +459,6 @@ class MainActivity : ThemedActivity(),
              override fun onDismissed(transientBottomBar: Snackbar, event: Int) {
                  if (event == DISMISS_EVENT_SWIPE || event == DISMISS_EVENT_ACTION) {
                      DataStore.serviceError = ""
@@ -4244,7 +4261,7 @@ index 650a1a3..c8486f4 100644
                      DataStore.serviceErrorGeo = false
                      DataStore.serviceErrorRuleSets = false
                  }
-@@ -499,14 +484,13 @@ class MainActivity : ThemedActivity(),
+@@ -499,14 +485,13 @@ class MainActivity : ThemedActivity(),
          (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)?.showGroup(id)
      }
  
@@ -7455,18 +7472,40 @@ index f5095f0..0000000
 -    override fun performClick(): Boolean = super.performClick()
 -}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/widget/StatsBar.kt b/app/src/main/java/io/nekohasekai/sagernet/widget/StatsBar.kt
-index 4c7f309..dd9d528 100644
+index 4c7f309..41ef141 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/widget/StatsBar.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/widget/StatsBar.kt
-@@ -26,6 +26,7 @@ import com.google.android.material.bottomappbar.BottomAppBar
+@@ -16,6 +16,7 @@ import android.graphics.drawable.RippleDrawable
+ import android.text.format.Formatter
+ import android.util.AttributeSet
+ import android.view.View
++import android.view.ViewTreeObserver
+ import android.widget.TextView
+ import androidx.appcompat.widget.TooltipCompat
+ import androidx.coordinatorlayout.widget.CoordinatorLayout
+@@ -23,9 +24,12 @@ import androidx.core.view.isVisible
+ import androidx.lifecycle.lifecycleScope
+ import androidx.lifecycle.whenStarted
+ import com.google.android.material.bottomappbar.BottomAppBar
++import com.google.android.material.bottomappbar.BottomAppBarTopEdgeTreatment
  import com.google.android.material.color.MaterialColors
  import com.google.android.material.shape.MaterialShapeDrawable
  import com.google.android.material.shape.ShapeAppearancePathProvider
++import com.google.android.material.shape.ShapePath
 +import com.google.android.material.snackbar.Snackbar
  import io.nekohasekai.sagernet.R
  import io.nekohasekai.sagernet.bg.BaseService
  import io.nekohasekai.sagernet.database.DataStore
-@@ -56,11 +57,9 @@ class StatsBar @JvmOverloads constructor(
+@@ -35,6 +39,8 @@ import io.nekohasekai.sagernet.ui.MainActivity
+ import io.nekohasekai.sagernet.ui.test.TestFormat
+ import io.nekohasekai.sagernet.SagerNet
+ import kotlin.math.abs
++import kotlin.math.atan2
++import kotlin.math.sqrt
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.delay
+@@ -56,11 +62,15 @@ class StatsBar @JvmOverloads constructor(
          HideAfterStart,
      }
  
@@ -7475,19 +7514,46 @@ index 4c7f309..dd9d528 100644
      private lateinit var rxText: TextView
      private var exitText: TextView? = null
 -    private var statusLine: CharSequence = ""
++    private var vpnButton: ServiceButton? = null
++    private val vpnCradle = VpnButtonCradle(fabCradleMargin, fabCradleRoundedCornerRadius)
++    private val updateCradleOnDraw = ViewTreeObserver.OnPreDrawListener {
++        updateVpnCradle()
++        true
++    }
      private var stateReported = false
      private val exitListener = { showExit() }
      @Suppress("unused")
-@@ -92,7 +91,7 @@ class StatsBar @JvmOverloads constructor(
+@@ -92,8 +102,9 @@ class StatsBar @JvmOverloads constructor(
  
      init {
          alpha = 0f
 -        // Replaces the rectangular content ripple and stats_focus, which also filled the FAB cradle (#92).
 +        // Use the bar outline as the ripple and focus mask.
          (background as? MaterialShapeDrawable)?.let { shape ->
++            shape.shapeAppearanceModel = shape.shapeAppearanceModel.toBuilder().setTopEdge(vpnCradle).build()
              val highlight = MaterialColors.getColor(this, R.attr.colorControlHighlight, 0x33FFFFFF)
              val stroke = MaterialColors.getColor(this, R.attr.whiteOrTextPrimary, 0xFFFFFFFF.toInt())
-@@ -136,9 +135,7 @@ class StatsBar @JvmOverloads constructor(
+             foreground = RippleDrawable(
+@@ -104,6 +115,18 @@ class StatsBar @JvmOverloads constructor(
+         }
+     }
+ 
++    fun bindVpnButton(button: ServiceButton) {
++        vpnButton = button
++    }
++
++    private fun updateVpnCradle() {
++        val button = vpnButton ?: return
++        // The bar moves during its own animation. The button is fixed in their shared parent.
++        val centerY = button.y + button.height / 2f - y
++        val diameter = if (button.isShown) button.height * button.scaleY else 0f
++        if (vpnCradle.update(centerY, diameter)) background?.invalidateSelf()
++    }
++
+     override fun getBehavior(): YourBehavior {
+         if (!this::behavior.isInitialized) behavior = YourBehavior()
+         return behavior
+@@ -136,9 +159,7 @@ class StatsBar @JvmOverloads constructor(
          }
      }
  
@@ -7498,7 +7564,7 @@ index 4c7f309..dd9d528 100644
      override fun invalidateDrawable(drawable: Drawable) {
          super.invalidateDrawable(drawable)
          if (drawable === background) foreground?.invalidateSelf()
-@@ -146,7 +143,6 @@ class StatsBar @JvmOverloads constructor(
+@@ -146,7 +167,6 @@ class StatsBar @JvmOverloads constructor(
  
      override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
          super.onLayout(changed, left, top, right, bottom)
@@ -7506,7 +7572,7 @@ index 4c7f309..dd9d528 100644
          foreground?.invalidateSelf()
          val transition = pendingTransition
          if (transition != null) {
-@@ -158,7 +154,6 @@ class StatsBar @JvmOverloads constructor(
+@@ -158,7 +178,6 @@ class StatsBar @JvmOverloads constructor(
      }
  
      override fun setOnClickListener(l: OnClickListener?) {
@@ -7514,7 +7580,20 @@ index 4c7f309..dd9d528 100644
          txText = findViewById(R.id.tx)
          rxText = findViewById(R.id.rx)
          exitText = findViewById(R.id.exit_country)
-@@ -178,17 +173,6 @@ class StatsBar @JvmOverloads constructor(
+@@ -167,28 +186,19 @@ class StatsBar @JvmOverloads constructor(
+ 
+     override fun onAttachedToWindow() {
+         super.onAttachedToWindow()
++        viewTreeObserver.addOnPreDrawListener(updateCradleOnDraw)
+         ExitIp.listener = exitListener
+         showExit()
+     }
+ 
+     // A rotation keeps the lookup; a destroyed activity drops it, since the service may restart unseen meanwhile.
+     override fun onDetachedFromWindow() {
++        viewTreeObserver.removeOnPreDrawListener(updateCradleOnDraw)
+         if (ExitIp.listener === exitListener) ExitIp.listener = null
+         if ((context as? Activity)?.isChangingConfigurations != true) ExitIp.clear()
          super.onDetachedFromWindow()
      }
  
@@ -7532,16 +7611,45 @@ index 4c7f309..dd9d528 100644
      /**
       * runningCountryInfo (mainwindow_view.cpp:151-165): the exit's flag and country, no IP or city. Hidden while
       * exit_country_lookup is off: ExitIp then holds no result and runs no lookup, a tap's refresh() included.
-@@ -215,7 +199,7 @@ class StatsBar @JvmOverloads constructor(
-             view.contentDescription = country
-             view.isVisible = true
+@@ -197,25 +207,23 @@ class StatsBar @JvmOverloads constructor(
+         val view = exitText ?: return
+         val connected = currentState == BaseService.State.Connected
+         val info = ExitIp.info?.takeIf { connected }
+-        // A running lookup dims the previous exit, or holds a placeholder when there is none yet.
+-        val refreshing = connected && ExitIp.refreshing
+-        view.alpha = if (refreshing) 0.5f else 1f
++        view.isVisible = info != null
+         if (info == null) {
+-            view.text = "…"
++            view.text = null
+             view.contentDescription = null
+-            view.isVisible = refreshing
+         } else {
+-            val country = if (TestFormat.isCountryCode(info.countryCode)) {
+-                TestFormat.countryName(info.countryCode)
+-            } else {
+-                info.country
++            val code = info.countryCode
++            val flag = TestFormat.flag(code)
++            val country = if (flag.isEmpty()) info.country else TestFormat.countryName(code)
++            val shortCountry = when {
++                code == "US" -> context.getString(R.string.exit_country_us_short)
++                flag.isNotEmpty() -> code
++                else -> country
+             }
+-            val flag = TestFormat.flag(info.countryCode)
+-            view.text = if (flag.isEmpty()) country else "$flag\u00A0$country"
+-            view.contentDescription = country
+-            view.isVisible = true
++            view.text = if (flag.isEmpty()) shortCountry else "$flag\u00A0$shortCountry"
++            view.contentDescription = context.getString(R.string.exit_country_description, country)
          }
 -        updateTooltip()
-+        TooltipCompat.setTooltipText(this, view.takeIf { it.isVisible }?.contentDescription)
++        TooltipCompat.setTooltipText(this, view.contentDescription)
      }
  
      // On TV the bar stays put: it holds the URL test and must stay reachable by D-pad.
-@@ -378,20 +362,7 @@ class StatsBar @JvmOverloads constructor(
+@@ -378,20 +386,7 @@ class StatsBar @JvmOverloads constructor(
          }
          stateReported = true
          showExit()
@@ -7563,7 +7671,7 @@ index 4c7f309..dd9d528 100644
      }
  
      @SuppressLint("SetTextI18n")
-@@ -411,39 +382,31 @@ class StatsBar @JvmOverloads constructor(
+@@ -411,39 +406,31 @@ class StatsBar @JvmOverloads constructor(
      fun testConnection() {
          val activity = context as MainActivity
          isEnabled = false
@@ -7621,11 +7729,54 @@ index 4c7f309..dd9d528 100644
              }
              // After the test, not beside it: one request at a time through the running connection.
              onMainDispatcher { ExitIp.refresh() }
-@@ -452,7 +415,7 @@ class StatsBar @JvmOverloads constructor(
+@@ -452,7 +439,50 @@ class StatsBar @JvmOverloads constructor(
  
  }
  
 -/** The bar background's live outline (cradle included) for the same bounds. */
++/** A round cradle with vertical sides once the bar's top is above the fixed button. */
++private class VpnButtonCradle(
++    private val gap: Float,
++    private val shoulder: Float,
++) : BottomAppBarTopEdgeTreatment(gap, shoulder, 0f) {
++    private var centerY = 0f
++    private var radius = 0f
++
++    fun update(buttonCenterY: Float, diameter: Float): Boolean {
++        val buttonRadius = diameter / 2f + gap
++        val overlaps = diameter > 0f && buttonCenterY > -buttonRadius
++        val nextRadius = if (overlaps) buttonRadius else 0f
++        val nextCenter = if (overlaps) buttonCenterY else 0f
++        if (radius == nextRadius && centerY == nextCenter) return false
++        radius = nextRadius
++        centerY = nextCenter
++        return true
++    }
++
++    override fun getEdgePath(length: Float, center: Float, interpolation: Float, shapePath: ShapePath) {
++        if (radius == 0f) {
++            shapePath.lineTo(length, 0f)
++            return
++        }
++
++        // The shoulders meet the cutout tangentially. After a quarter turn they continue as straight sides.
++        val distanceY = (shoulder - centerY).coerceAtLeast(0f)
++        val distance = radius + shoulder
++        val distanceX = sqrt((distance * distance - distanceY * distanceY).coerceAtLeast(0f))
++        val angle = Math.toDegrees(atan2(distanceX, distanceY).toDouble()).toFloat()
++        val leftShoulder = center - distanceX
++        val rightShoulder = center + distanceX
++
++        shapePath.lineTo(leftShoulder, 0f)
++        shapePath.addArc(leftShoulder - shoulder, 0f, leftShoulder + shoulder, 2f * shoulder, 270f, angle)
++        if (centerY > shoulder) shapePath.lineTo(center - radius, centerY)
++        shapePath.addArc(center - radius, centerY - radius, center + radius, centerY + radius, 90f + angle, -2f * angle)
++        if (centerY > shoulder) shapePath.lineTo(center + radius, shoulder)
++        shapePath.addArc(rightShoulder - shoulder, 0f, rightShoulder + shoulder, 2f * shoulder, 270f - angle, angle)
++        shapePath.lineTo(length, 0f)
++    }
++}
++
 +/** The bar background's live outline for the same bounds. */
  private class BarOutline(private val shape: MaterialShapeDrawable) {
      private val provider = ShapeAppearancePathProvider()
@@ -8125,10 +8276,10 @@ index f7dec45..0000000
 -<ripple xmlns:android="http://schemas.android.com/apk/res/android"
 -    android:color="@color/widget_ripple" />
 diff --git a/app/src/main/res/layout-land/layout_stats_bar_content.xml b/app/src/main/res/layout-land/layout_stats_bar_content.xml
-index 43f8bbc..c1d08af 100644
+index 43f8bbc..5964633 100644
 --- a/app/src/main/res/layout-land/layout_stats_bar_content.xml
 +++ b/app/src/main/res/layout-land/layout_stats_bar_content.xml
-@@ -1,6 +1,5 @@
+@@ -1,11 +1,11 @@
  <?xml version="1.0" encoding="utf-8"?>
 -<!-- One line: the speeds left of the FAB, the status and the exit right of it; equal halves keep the gap under the
 -     centred FAB. -->
@@ -8136,7 +8287,13 @@ index 43f8bbc..c1d08af 100644
  <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
      xmlns:tools="http://schemas.android.com/tools"
      android:layout_width="match_parent"
-@@ -41,10 +40,9 @@
+     android:layout_height="wrap_content"
+     android:gravity="center_vertical"
++    android:minHeight="@dimen/stats_bar_content_height"
+     android:orientation="horizontal"
+     android:paddingStart="16dp"
+     android:paddingTop="12dp"
+@@ -41,10 +41,9 @@
      </LinearLayout>
  
      <Space
@@ -8148,7 +8305,7 @@ index 43f8bbc..c1d08af 100644
      <LinearLayout
          android:layout_width="0dp"
          android:layout_height="wrap_content"
-@@ -52,17 +50,6 @@
+@@ -52,17 +51,6 @@
          android:gravity="center_vertical"
          android:orientation="horizontal">
  
@@ -8166,6 +8323,15 @@ index 43f8bbc..c1d08af 100644
  
          <TextView
              android:id="@+id/exit_country"
+@@ -74,7 +62,7 @@
+             android:textColor="?whiteOrTextPrimary"
+             android:textSize="14sp"
+             android:visibility="gone"
+-            tools:text="Germany"
++            tools:text="🇺🇸 США"
+             tools:visibility="visible" />
+ 
+     </LinearLayout>
 diff --git a/app/src/main/res/layout/layout_about.xml b/app/src/main/res/layout/layout_about.xml
 deleted file mode 100644
 index fb67ee8..0000000
@@ -8854,7 +9020,7 @@ index 0376830..0000000
 -
 -</LinearLayout>
 diff --git a/app/src/main/res/layout/layout_main.xml b/app/src/main/res/layout/layout_main.xml
-index 70f960d..8e5c4ff 100644
+index 70f960d..8103bdd 100644
 --- a/app/src/main/res/layout/layout_main.xml
 +++ b/app/src/main/res/layout/layout_main.xml
 @@ -19,6 +19,21 @@
@@ -8890,15 +9056,15 @@ index 70f960d..8e5c4ff 100644
              android:layout_width="wrap_content"
              android:layout_height="wrap_content"
 +            android:layout_gravity="bottom|center_horizontal"
-+            android:layout_marginBottom="24dp"
++            android:layout_marginBottom="28.4dp"
              android:elevation="6dp"
              android:foreground="@drawable/fab_focus_ring"
              android:nextFocusDown="@+id/stats"
              app:backgroundTint="?colorPrimary"
 -            app:layout_anchor="@id/stats"
 -            app:layout_dodgeInsetEdges="top"
-+            app:fabCustomSize="67.2dp"
-+            app:maxImageSize="28.8dp"
++            app:fabCustomSize="58.4dp"
++            app:maxImageSize="25dp"
              app:pressedTranslationZ="6dp"
              app:srcCompat="@drawable/ic_service_idle" />
  
@@ -9096,19 +9262,42 @@ index 6c9119e..d3718dc 100644
              <LinearLayout
                  android:id="@+id/share"
 diff --git a/app/src/main/res/layout/layout_stats_bar_content.xml b/app/src/main/res/layout/layout_stats_bar_content.xml
-index a2d9665..676adc4 100644
+index a2d9665..fd08619 100644
 --- a/app/src/main/res/layout/layout_stats_bar_content.xml
 +++ b/app/src/main/res/layout/layout_stats_bar_content.xml
-@@ -39,7 +39,7 @@
+@@ -3,6 +3,8 @@
+     xmlns:tools="http://schemas.android.com/tools"
+     android:layout_width="match_parent"
+     android:layout_height="wrap_content"
++    android:gravity="center_vertical"
++    android:minHeight="@dimen/stats_bar_content_height"
+     android:orientation="vertical"
+     android:padding="16dp">
+ 
+@@ -10,6 +12,7 @@
+     <LinearLayout
+         android:layout_width="match_parent"
+         android:layout_height="wrap_content"
++        android:gravity="center_vertical"
+         android:orientation="horizontal">
+ 
+         <LinearLayout
+@@ -39,7 +42,7 @@
          </LinearLayout>
  
          <Space
 -            android:layout_width="72dp"
-+            android:layout_width="84dp"
++            android:layout_width="92dp"
              android:layout_height="0dp" />
  
          <TextView
-@@ -58,14 +58,5 @@
+@@ -53,19 +56,10 @@
+             android:textColor="?whiteOrTextPrimary"
+             android:textSize="14sp"
+             android:visibility="gone"
+-            tools:text="Germany"
++            tools:text="🇺🇸 США"
+             tools:visibility="visible" />
  
      </LinearLayout>
  
@@ -12668,17 +12857,19 @@ index 0000000..4e214b0
 +    <color name="connection_quality_red">#B3261E</color>
 +</resources>
 diff --git a/app/src/main/res/values/dimens.xml b/app/src/main/res/values/dimens.xml
-index 4936635..38725bd 100644
+index 4936635..5084fd6 100644
 --- a/app/src/main/res/values/dimens.xml
 +++ b/app/src/main/res/values/dimens.xml
-@@ -13,7 +13,6 @@
+@@ -13,8 +13,8 @@
      <dimen name="dialog_corner_radius">28dp</dimen>
      <dimen name="dialog_background_inset">24dp</dimen>
  
 -    <dimen name="nav_item_corner_radius">14dp</dimen>
      <dimen name="button_corner_radius">12dp</dimen>
++    <dimen name="stats_bar_content_height">96dp</dimen>
  
      <dimen name="mtrl_snackbar_background_corner_radius">12dp</dimen>
+ </resources>
 diff --git a/app/src/main/res/values/ids.xml b/app/src/main/res/values/ids.xml
 index a42c72e..8084a7a 100644
 --- a/app/src/main/res/values/ids.xml
@@ -14185,7 +14376,7 @@ index 354bad0..5da7f53 100644
                      .replace("-oss", "")
              }
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..0231661 100644
+index 751051e..fcbb7c4 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -14193,8 +14384,8 @@ index 751051e..0231661 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.18
-+VERSION_CODE=131
++VERSION_NAME=2.0.7-quality.19
++VERSION_CODE=132
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file
 diff --git a/openspec/specs/app-widgets/spec.md b/openspec/specs/app-widgets/spec.md

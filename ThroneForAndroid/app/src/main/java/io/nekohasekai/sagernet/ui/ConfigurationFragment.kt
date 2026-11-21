@@ -347,6 +347,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
             setNavigationIcon(R.drawable.ic_navigation_close, R.string.navigation_close)
             toolbar.setNavigationOnClickListener { requireActivity().finish() }
         } else {
+            toolbar.title = null
             toolbar.menu.removeItem(R.id.action_search)
             toolbar.inflateMenu(R.menu.profile_selection_menu)
             TvControls.addServerSwitch(toolbar.menu, R.id.group_profiles_toolbar)
@@ -666,7 +667,7 @@ class ConfigurationFragment : ToolbarFragment(R.layout.layout_group_list),
                 toolbar.title = resources.getQuantityString(R.plurals.profiles_selected, selection.count, selection.count)
             } else {
                 setNavigationIcon(R.drawable.ic_navigation_menu, R.string.navigation_open_drawer)
-                toolbar.setTitle(R.string.app_name)
+                toolbar.title = null
             }
         }
         if (::pager.isInitialized) pager.isUserInputEnabled = !active

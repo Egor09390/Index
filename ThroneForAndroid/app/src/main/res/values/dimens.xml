@@ -14,6 +14,7 @@
     <dimen name="dialog_background_inset">24dp</dimen>
 
     <dimen name="button_corner_radius">12dp</dimen>
+    <dimen name="stats_bar_content_height">96dp</dimen>
 
     <dimen name="mtrl_snackbar_background_corner_radius">12dp</dimen>
 </resources>
