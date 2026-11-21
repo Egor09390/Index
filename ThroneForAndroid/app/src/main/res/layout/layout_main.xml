@@ -53,13 +53,13 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="28.4dp"
+            android:layout_marginBottom="26.35dp"
             android:elevation="6dp"
             android:foreground="@drawable/fab_focus_ring"
             android:nextFocusDown="@+id/stats"
             app:backgroundTint="?colorPrimary"
-            app:fabCustomSize="58.4dp"
-            app:maxImageSize="25dp"
+            app:fabCustomSize="62.5dp"
+            app:maxImageSize="26.75dp"
             app:pressedTranslationZ="6dp"
             app:srcCompat="@drawable/ic_service_idle" />
 

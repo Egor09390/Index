@@ -9,6 +9,8 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
@@ -24,11 +26,9 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.whenStarted
 import com.google.android.material.bottomappbar.BottomAppBar
-import com.google.android.material.bottomappbar.BottomAppBarTopEdgeTreatment
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.shape.ShapeAppearancePathProvider
-import com.google.android.material.shape.ShapePath
 import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.bg.BaseService
@@ -39,8 +39,6 @@ import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.test.TestFormat
 import io.nekohasekai.sagernet.SagerNet
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -66,9 +64,14 @@ class StatsBar @JvmOverloads constructor(
     private lateinit var rxText: TextView
     private var exitText: TextView? = null
     private var vpnButton: ServiceButton? = null
-    private val vpnCradle = VpnButtonCradle(fabCradleMargin, fabCradleRoundedCornerRadius)
-    private val updateCradleOnDraw = ViewTreeObserver.OnPreDrawListener {
-        updateVpnCradle()
+    private var cutoutX = 0f
+    private var cutoutY = 0f
+    private var cutoutRadius = 0f
+    private val cutoutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+    }
+    private val updateCutoutOnPreDraw = ViewTreeObserver.OnPreDrawListener {
+        updateVpnButtonCutout()
         true
     }
     private var stateReported = false
@@ -104,7 +107,6 @@ class StatsBar @JvmOverloads constructor(
         alpha = 0f
         // Use the bar outline as the ripple and focus mask.
         (background as? MaterialShapeDrawable)?.let { shape ->
-            shape.shapeAppearanceModel = shape.shapeAppearanceModel.toBuilder().setTopEdge(vpnCradle).build()
             val highlight = MaterialColors.getColor(this, R.attr.colorControlHighlight, 0x33FFFFFF)
             val stroke = MaterialColors.getColor(this, R.attr.whiteOrTextPrimary, 0xFFFFFFFF.toInt())
             foreground = RippleDrawable(
@@ -119,12 +121,35 @@ class StatsBar @JvmOverloads constructor(
         vpnButton = button
     }
 
-    private fun updateVpnCradle() {
+    private fun updateVpnButtonCutout() {
         val button = vpnButton ?: return
-        // The bar moves during its own animation. The button is fixed in their shared parent.
+        // Recompute in the moving bar's coordinates to keep the opening centered on the fixed button.
+        val centerX = button.x + button.width / 2f - x
         val centerY = button.y + button.height / 2f - y
-        val diameter = if (button.isShown) button.height * button.scaleY else 0f
-        if (vpnCradle.update(centerY, diameter)) background?.invalidateSelf()
+        val buttonRadius = button.height * button.scaleY / 2f
+        val outerRadius = buttonRadius + fabCradleMargin
+        val overlapsBar = button.isShown && buttonRadius > 0f &&
+            centerY + outerRadius > 0f && centerY - outerRadius < height
+        val radius = if (overlapsBar) outerRadius else 0f
+        if (radius == cutoutRadius && (radius == 0f || (centerX == cutoutX && centerY == cutoutY))) return
+
+        cutoutX = centerX
+        cutoutY = centerY
+        cutoutRadius = radius
+        invalidate()
+    }
+
+    override fun draw(canvas: Canvas) {
+        if (cutoutRadius == 0f) {
+            super.draw(canvas)
+            return
+        }
+
+        // Punch the smooth circle through the panel and its focus ripple on the same layer.
+        val layer = canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
+        super.draw(canvas)
+        canvas.drawCircle(cutoutX, cutoutY, cutoutRadius, cutoutPaint)
+        canvas.restoreToCount(layer)
     }
 
     override fun getBehavior(): YourBehavior {
@@ -186,14 +211,14 @@ class StatsBar @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        viewTreeObserver.addOnPreDrawListener(updateCradleOnDraw)
+        viewTreeObserver.addOnPreDrawListener(updateCutoutOnPreDraw)
         ExitIp.listener = exitListener
         showExit()
     }
 
     // A rotation keeps the lookup; a destroyed activity drops it, since the service may restart unseen meanwhile.
     override fun onDetachedFromWindow() {
-        viewTreeObserver.removeOnPreDrawListener(updateCradleOnDraw)
+        viewTreeObserver.removeOnPreDrawListener(updateCutoutOnPreDraw)
         if (ExitIp.listener === exitListener) ExitIp.listener = null
         if ((context as? Activity)?.isChangingConfigurations != true) ExitIp.clear()
         super.onDetachedFromWindow()
@@ -437,49 +462,6 @@ class StatsBar @JvmOverloads constructor(
         }
     }
 
-}
-
-/** A round cradle with vertical sides once the bar's top is above the fixed button. */
-private class VpnButtonCradle(
-    private val gap: Float,
-    private val shoulder: Float,
-) : BottomAppBarTopEdgeTreatment(gap, shoulder, 0f) {
-    private var centerY = 0f
-    private var radius = 0f
-
-    fun update(buttonCenterY: Float, diameter: Float): Boolean {
-        val buttonRadius = diameter / 2f + gap
-        val overlaps = diameter > 0f && buttonCenterY > -buttonRadius
-        val nextRadius = if (overlaps) buttonRadius else 0f
-        val nextCenter = if (overlaps) buttonCenterY else 0f
-        if (radius == nextRadius && centerY == nextCenter) return false
-        radius = nextRadius
-        centerY = nextCenter
-        return true
-    }
-
-    override fun getEdgePath(length: Float, center: Float, interpolation: Float, shapePath: ShapePath) {
-        if (radius == 0f) {
-            shapePath.lineTo(length, 0f)
-            return
-        }
-
-        // The shoulders meet the cutout tangentially. After a quarter turn they continue as straight sides.
-        val distanceY = (shoulder - centerY).coerceAtLeast(0f)
-        val distance = radius + shoulder
-        val distanceX = sqrt((distance * distance - distanceY * distanceY).coerceAtLeast(0f))
-        val angle = Math.toDegrees(atan2(distanceX, distanceY).toDouble()).toFloat()
-        val leftShoulder = center - distanceX
-        val rightShoulder = center + distanceX
-
-        shapePath.lineTo(leftShoulder, 0f)
-        shapePath.addArc(leftShoulder - shoulder, 0f, leftShoulder + shoulder, 2f * shoulder, 270f, angle)
-        if (centerY > shoulder) shapePath.lineTo(center - radius, centerY)
-        shapePath.addArc(center - radius, centerY - radius, center + radius, centerY + radius, 90f + angle, -2f * angle)
-        if (centerY > shoulder) shapePath.lineTo(center + radius, shoulder)
-        shapePath.addArc(rightShoulder - shoulder, 0f, rightShoulder + shoulder, 2f * shoulder, 270f - angle, angle)
-        shapePath.lineTo(length, 0f)
-    }
 }
 
 /** The bar background's live outline for the same bounds. */

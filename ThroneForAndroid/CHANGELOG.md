@@ -1,3 +1,7 @@
+#### 2.0.7-quality.20
+
+* Increase the VPN button and its icon by 7% and keep the button centered in a round opening in the stats bar.
+
 #### 2.0.7-quality.19
 
 * Make the VPN button smaller and restore its cutout in the taller animated stats bar.
