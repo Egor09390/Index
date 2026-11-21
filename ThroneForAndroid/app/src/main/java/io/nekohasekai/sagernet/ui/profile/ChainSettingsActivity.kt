@@ -582,7 +582,7 @@ class ChainSettingsActivity : ProfileSettingsActivity<Chain>(R.layout.layout_cha
         val profileName = binding.profileName
         val profileType = binding.profileType
         val trafficText: TextView = binding.trafficText
-        val editButton = binding.edit
+        val editButton = binding.edit.apply { isVisible = true }
         val shareLayout = binding.share
         val stepResult: TextView = binding.profileResult
         val stepExplanation: TextView = binding.profileError

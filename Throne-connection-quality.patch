@@ -4383,6 +4383,19 @@ index f6c7e8a..b85d63a 100644
          toolbar?.setNavigationOnClickListener {
              (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START)
          }
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profile/ChainSettingsActivity.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profile/ChainSettingsActivity.kt
+index 5f4e0eb..89bb10e 100644
+--- a/app/src/main/java/io/nekohasekai/sagernet/ui/profile/ChainSettingsActivity.kt
++++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profile/ChainSettingsActivity.kt
+@@ -582,7 +582,7 @@ class ChainSettingsActivity : ProfileSettingsActivity<Chain>(R.layout.layout_cha
+         val profileName = binding.profileName
+         val profileType = binding.profileType
+         val trafficText: TextView = binding.trafficText
+-        val editButton = binding.edit
++        val editButton = binding.edit.apply { isVisible = true }
+         val shareLayout = binding.share
+         val stepResult: TextView = binding.profileResult
+         val stepExplanation: TextView = binding.profileError
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupActions.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupActions.kt
 index b3f556a..dc4d570 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/GroupActions.kt
@@ -8999,7 +9012,7 @@ index cd99345..0000000
 -
 -</androidx.core.widget.NestedScrollView>
 diff --git a/app/src/main/res/layout/layout_profile.xml b/app/src/main/res/layout/layout_profile.xml
-index 95423dd..1217f30 100644
+index 95423dd..e0ae165 100644
 --- a/app/src/main/res/layout/layout_profile.xml
 +++ b/app/src/main/res/layout/layout_profile.xml
 @@ -78,17 +78,6 @@
@@ -9020,7 +9033,26 @@ index 95423dd..1217f30 100644
                  <LinearLayout
                      android:id="@+id/share"
                      android:layout_width="wrap_content"
-@@ -195,6 +184,17 @@
+@@ -114,6 +103,18 @@
+ 
+                 </LinearLayout>
+ 
++                <androidx.appcompat.widget.AppCompatImageView
++                    android:id="@+id/edit"
++                    android:layout_width="wrap_content"
++                    android:layout_height="wrap_content"
++                    android:layout_gravity="top"
++                    android:background="?attr/selectableItemBackgroundBorderless"
++                    android:contentDescription="@string/edit"
++                    android:focusable="true"
++                    android:padding="12dp"
++                    android:visibility="gone"
++                    app:srcCompat="@drawable/ic_image_edit" />
++
+                 <androidx.appcompat.widget.AppCompatImageView
+                     android:id="@+id/more"
+                     android:layout_width="wrap_content"
+@@ -195,6 +196,17 @@
                      android:textColor="?android:attr/textColorSecondary"
                      tools:text="19 kB↑ 35 kB↓" />
  
