@@ -101,8 +101,16 @@ class MainActivity : ThemedActivity(),
         binding.fab.initProgress(binding.fabProgress)
         navigation = binding.navView
         navigation.setNavigationItemSelectedListener(this)
-        // Center the menu in the visible drawer, between the system bars.
-        ViewCompat.setOnApplyWindowInsetsListener(binding.navDrawer) { drawer, insets ->
+        val drawer = binding.navDrawer
+        fun centerDrawerMenu() {
+            // Measure the midpoint from the top of the window down to the navigation bar.
+            // In short windows, keep the top item clear of the status bar.
+            val statusInset = drawer.paddingTop
+            val topClearance = (navigation.top - statusInset).coerceAtLeast(0)
+            navigation.translationY = -minOf(statusInset / 2f, topClearance.toFloat())
+        }
+        navigation.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> centerDrawerMenu() }
+        ViewCompat.setOnApplyWindowInsetsListener(drawer) { _, insets ->
             val bars = insets.bars()
             val rtl = drawer.layoutDirection == View.LAYOUT_DIRECTION_RTL
             drawer.updatePaddingRelative(
@@ -110,6 +118,7 @@ class MainActivity : ThemedActivity(),
                 top = bars.top,
                 bottom = bars.bottom,
             )
+            centerDrawerMenu()
             WindowInsetsCompat.CONSUMED
         }
         // The drawer's surface runs under the status bar: the icons follow it while the drawer is mostly open.

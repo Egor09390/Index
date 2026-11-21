@@ -1,3 +1,8 @@
+#### 2.0.7-quality.18
+
+* Reduce the VPN button and its airplane icon to 80% of the previous size.
+* Narrow the drawer, center its menu above the system navigation bar, and round the selected item's highlight.
+
 #### 2.0.7-quality.17
 
 * Increase the VPN connect button and its icon by 50%.
