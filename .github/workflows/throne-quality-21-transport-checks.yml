@@ -1,0 +1,33 @@
+name: Exercise four quality probe transports
+on:
+  push:
+    branches: [throne-quality-21-transport-checks]
+permissions:
+  contents: read
+jobs:
+  transports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Run the release HTTP probes through local protocol pairs
+        working-directory: lab
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64-glibc.tar.gz -o singbox.tgz
+          tar -xzf singbox.tgz
+          curl -fsSL --retry 3 https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip -o kotlin.zip
+          unzip -q kotlin.zip
+          mkdir -p deps
+          curl -fsSL --retry 3 https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp/5.0.0-alpha.3/okhttp-5.0.0-alpha.3.jar -o deps/okhttp.jar
+          curl -fsSL --retry 3 https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/3.0.0/okio-jvm-3.0.0.jar -o deps/okio.jar
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout lab.key -out lab.crt -days 1 -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          keytool -importcert -noprompt -alias lab -file lab.crt -keystore lab.trust -storepass changeit
+          python prepare.py
+          cp=deps/okhttp.jar:deps/okio.jar:kotlinc/lib/kotlinx-coroutines-core-jvm.jar
+          kotlinc/bin/kotlinc ../ThroneForAndroid/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt NetworkLab.kt -cp "$cp" -d compiled
+          python network.py
