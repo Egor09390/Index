@@ -1661,10 +1661,10 @@ index 0000000..ad07982
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
 new file mode 100644
-index 0000000..0a210db
+index 0000000..4faaf02
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,265 @@
 +package io.nekohasekai.sagernet.bg.test
 +
 +import android.os.SystemClock
@@ -1679,6 +1679,7 @@ index 0000000..0a210db
 +import io.nekohasekai.sagernet.outbound.json.JsonObject
 +import io.nekohasekai.sagernet.outbound.json.JsonArray
 +import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
++import io.throneproj.mobile.Instance
 +import io.throneproj.mobile.Mobile
 +import kotlinx.coroutines.CancellationException
 +import kotlinx.coroutines.delay
@@ -1759,13 +1760,16 @@ index 0000000..0a210db
 +            for (rule in route.array("rules")) rules.add(rule)
 +            route["rules"] = rules
 +
-+            val start = SystemClock.elapsedRealtimeNanos()
-+            val instance = Mobile.newInstance(CoreRuntime.platform, core.copy(coreConfig = config.toCompact()).toStartOptions())
++            val options = core.copy(coreConfig = config.toCompact()).toStartOptions()
++            var instance: Instance? = null
 +            try {
-+                instance.start()
-+                return probe(port, password, start)
++                return probe(port, password) {
++                    val box = Mobile.newInstance(CoreRuntime.platform, options)
++                    instance = box
++                    box.start()
++                }
 +            } finally {
-+                runCatching { instance.close() }.onFailure { Logs.w(it) }
++                runCatching { instance?.close() }.onFailure { Logs.w(it) }
 +            }
 +        } finally {
 +            ports.close()
@@ -1777,7 +1781,7 @@ index 0000000..0a210db
 +            ?: (config.array("outbounds").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 +            ?: (config.array("endpoints").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 +
-+    private suspend fun probe(port: Int, password: String, start: Long): QualityReport {
++    private suspend fun probe(port: Int, password: String, startCore: () -> Unit): QualityReport {
 +        val credential = Credentials.basic(PROBE_USER, password)
 +        var connection: Connection? = null
 +        val client = OkHttpClient.Builder()
@@ -1793,13 +1797,12 @@ index 0000000..0a210db
 +            .retryOnConnectionFailure(false)
 +            .followRedirects(false)
 +            .build()
-+        val deadline = start + 3_500 * NS_PER_MS
 +        val baseline = Request.Builder().url(BASELINE).header("Cache-Control", "no-cache").build()
 +        var previous: Connection? = null
 +
-+        fun baselineProbe(startTime: Long, timeout: Long): QualityProbe {
++        fun baselineProbe(startTime: Long, timeout: Long, phaseDeadline: Long): QualityProbe {
 +            return try {
-+                call(client, baseline, deadline, timeout) { response ->
++                call(client, baseline, phaseDeadline, timeout) { response ->
 +                    val ms = (SystemClock.elapsedRealtimeNanos() - startTime) / 1e6
 +                    val reused = previous != null && previous === connection
 +                    previous = connection
@@ -1816,15 +1819,21 @@ index 0000000..0a210db
 +        }
 +
 +        try {
++            val start = SystemClock.elapsedRealtimeNanos()
++            startCore()
++            val deadline = start + 3500 * NS_PER_MS
++            // Leave time for independent origins even if the baseline endpoint stops answering.
++            val burstDeadline = deadline - 800 * NS_PER_MS
++            val streamDeadline = deadline - 350 * NS_PER_MS
 +            val coldBudget = 2000L - (SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS
-+            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget)
++            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget, burstDeadline)
 +                else QualityProbe(incomplete = true, reason = "долгий старт ядра")
 +            val burst = mutableListOf<QualityProbe>()
 +            repeat(5) { index ->
-+                if (index > 0) delay(((deadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
-+                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500)
++                if (index > 0) delay(((burstDeadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
++                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500, burstDeadline)
 +            }
-+            val stream = streamProbe(client, deadline)
++            val stream = streamProbe(client, streamDeadline)
 +            val gateway = gatewayProbe(client, deadline)
 +            val report = ConnectionQuality.evaluate(cold, burst, stream, gateway)
 +            return report.copy(details = report.details + "\nЗамер · ${(SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS} мс")
@@ -1892,7 +1901,11 @@ index 0000000..0a210db
 +    }
 +
 +    private fun gatewayProbe(client: OkHttpClient, deadline: Long): GatewayProbe {
-+        val request = Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
++        val request = try {
++            Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
++        } catch (_: IllegalArgumentException) {
++            return GatewayProbe("некорректный адрес")
++        }
 +        return try {
 +            call(client, request, deadline, 1000) {
 +                GatewayProbe("HTTP ${it.code}", it.code == 403 || it.code == 503, true)
@@ -2694,7 +2707,7 @@ index 3ea7f5c..e48f57a 100644
  
      // postUpdate: post to listeners, don't change the DB
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
-index 9eebe31..f74ef22 100644
+index 9eebe31..00c3232 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
 @@ -66,6 +66,9 @@ data class ProxyEntity(
@@ -2707,7 +2720,25 @@ index 9eebe31..f74ef22 100644
  ) : Parcelable {
  
      @IgnoredOnParcel
-@@ -292,9 +295,6 @@ data class ProxyEntity(
+@@ -152,13 +155,16 @@ data class ProxyEntity(
+     }
+ 
+     fun hasTestResults(): Boolean = latency != 0 || testCountry != null || ipOut != null || dlSpeed != null ||
+-        ulSpeed != null || testError != null || serviceChecks.isNotEmpty()
++        ulSpeed != null || testError != null || serviceChecks.isNotEmpty() || qualityScore != 0 || qualityDetail.isNotEmpty()
+ 
+     /** Profile::ClearTestResults, plus the Android-only error text. */
+     fun clearTestResults() {
+         testCountry = null
+         ipOut = null
+         serviceChecks = ""
++        qualityScore = 0
++        qualityDetail = ""
++        qualityGatewayWarning = false
+         latency = 0
+         latencyAt = 0L
+         dlSpeed = null
+@@ -292,9 +298,6 @@ data class ProxyEntity(
      @androidx.room.Dao
      interface Dao {
  
@@ -2717,7 +2748,7 @@ index 9eebe31..f74ef22 100644
          @Query("SELECT `id` FROM `profiles` WHERE `gid` = :groupId ORDER BY `user_order`, `id`")
          fun getIdsByGroup(groupId: Long): List<Long>
  
-@@ -349,7 +349,7 @@ data class ProxyEntity(
+@@ -349,7 +352,7 @@ data class ProxyEntity(
          @Query(
              "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
                  "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
@@ -2726,7 +2757,7 @@ index 9eebe31..f74ef22 100644
          )
          fun getWithoutDataByGroup(groupId: Long): List<ProxyEntity>
  
-@@ -357,7 +357,7 @@ data class ProxyEntity(
+@@ -357,7 +360,7 @@ data class ProxyEntity(
          @Query(
              "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
                  "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
@@ -2735,7 +2766,7 @@ index 9eebe31..f74ef22 100644
          )
          fun getWithoutData(proxyIds: List<Long>): List<ProxyEntity>
  
-@@ -397,7 +397,7 @@ data class ProxyEntity(
+@@ -397,7 +400,7 @@ data class ProxyEntity(
          fun setGroup(proxyId: Long, groupId: Long, order: Long)
  
          /** New data for a profile in place (subscription update, resolved address): test results and traffic stay. */
@@ -2744,7 +2775,7 @@ index 9eebe31..f74ef22 100644
          fun updateOutbound(proxyId: Long, type: String, name: String?, outboundJson: String): Int
  
          @Query("UPDATE `profiles` SET `traffic_dl` = :rx, `traffic_up` = :tx WHERE `id` = :proxyId")
-@@ -432,24 +432,20 @@ data class ProxyEntity(
+@@ -432,24 +435,20 @@ data class ProxyEntity(
          )
          fun updateLatency(proxyId: Long, latency: Int, latencyAt: Long, testError: String?): Int
  

@@ -12,6 +12,7 @@ import io.nekohasekai.sagernet.outbound.json.JsonInput
 import io.nekohasekai.sagernet.outbound.json.JsonObject
 import io.nekohasekai.sagernet.outbound.json.JsonArray
 import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
+import io.throneproj.mobile.Instance
 import io.throneproj.mobile.Mobile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -92,13 +93,16 @@ internal class QualityTestRunner(private val session: TestSession) {
             for (rule in route.array("rules")) rules.add(rule)
             route["rules"] = rules
 
-            val start = SystemClock.elapsedRealtimeNanos()
-            val instance = Mobile.newInstance(CoreRuntime.platform, core.copy(coreConfig = config.toCompact()).toStartOptions())
+            val options = core.copy(coreConfig = config.toCompact()).toStartOptions()
+            var instance: Instance? = null
             try {
-                instance.start()
-                return probe(port, password, start)
+                return probe(port, password) {
+                    val box = Mobile.newInstance(CoreRuntime.platform, options)
+                    instance = box
+                    box.start()
+                }
             } finally {
-                runCatching { instance.close() }.onFailure { Logs.w(it) }
+                runCatching { instance?.close() }.onFailure { Logs.w(it) }
             }
         } finally {
             ports.close()
@@ -110,7 +114,7 @@ internal class QualityTestRunner(private val session: TestSession) {
             ?: (config.array("outbounds").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
             ?: (config.array("endpoints").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 
-    private suspend fun probe(port: Int, password: String, start: Long): QualityReport {
+    private suspend fun probe(port: Int, password: String, startCore: () -> Unit): QualityReport {
         val credential = Credentials.basic(PROBE_USER, password)
         var connection: Connection? = null
         val client = OkHttpClient.Builder()
@@ -126,13 +130,12 @@ internal class QualityTestRunner(private val session: TestSession) {
             .retryOnConnectionFailure(false)
             .followRedirects(false)
             .build()
-        val deadline = start + 3_500 * NS_PER_MS
         val baseline = Request.Builder().url(BASELINE).header("Cache-Control", "no-cache").build()
         var previous: Connection? = null
 
-        fun baselineProbe(startTime: Long, timeout: Long): QualityProbe {
+        fun baselineProbe(startTime: Long, timeout: Long, phaseDeadline: Long): QualityProbe {
             return try {
-                call(client, baseline, deadline, timeout) { response ->
+                call(client, baseline, phaseDeadline, timeout) { response ->
                     val ms = (SystemClock.elapsedRealtimeNanos() - startTime) / 1e6
                     val reused = previous != null && previous === connection
                     previous = connection
@@ -149,15 +152,21 @@ internal class QualityTestRunner(private val session: TestSession) {
         }
 
         try {
+            val start = SystemClock.elapsedRealtimeNanos()
+            startCore()
+            val deadline = start + 3500 * NS_PER_MS
+            // Leave time for independent origins even if the baseline endpoint stops answering.
+            val burstDeadline = deadline - 800 * NS_PER_MS
+            val streamDeadline = deadline - 350 * NS_PER_MS
             val coldBudget = 2000L - (SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS
-            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget)
+            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget, burstDeadline)
                 else QualityProbe(incomplete = true, reason = "долгий старт ядра")
             val burst = mutableListOf<QualityProbe>()
             repeat(5) { index ->
-                if (index > 0) delay(((deadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
-                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500)
+                if (index > 0) delay(((burstDeadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
+                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500, burstDeadline)
             }
-            val stream = streamProbe(client, deadline)
+            val stream = streamProbe(client, streamDeadline)
             val gateway = gatewayProbe(client, deadline)
             val report = ConnectionQuality.evaluate(cold, burst, stream, gateway)
             return report.copy(details = report.details + "\nЗамер · ${(SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS} мс")
@@ -225,7 +234,11 @@ internal class QualityTestRunner(private val session: TestSession) {
     }
 
     private fun gatewayProbe(client: OkHttpClient, deadline: Long): GatewayProbe {
-        val request = Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
+        val request = try {
+            Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
+        } catch (_: IllegalArgumentException) {
+            return GatewayProbe("некорректный адрес")
+        }
         return try {
             call(client, request, deadline, 1000) {
                 GatewayProbe("HTTP ${it.code}", it.code == 403 || it.code == 503, true)
