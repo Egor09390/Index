@@ -112,10 +112,14 @@ index 28bcdd4..c161e6b 100644
  # python bytecode
  __pycache__/
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..f635c14 100644
+index 6460f87..e3f3810 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,101 @@
+@@ -1,3 +1,105 @@
++#### 2.0.7-quality.21
++
++* Measure cold start, five keep-alive requests, a 64 KiB transfer and the configured HTTPS gateway. Tap a profile score for the measurements.
++
 +#### 2.0.7-quality.20
 +
 +* Increase the VPN button and its icon by 7% and keep the button centered in a round opening in the stats bar.
@@ -1530,42 +1534,137 @@ index 30d8cda..c8fdaaa 100644
          }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
 new file mode 100644
-index 0000000..cf4c61d
+index 0000000..baeaa17
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,82 @@
 +package io.nekohasekai.sagernet.bg.test
 +
++import java.util.Locale
++import kotlin.math.abs
++import kotlin.math.ceil
++import kotlin.math.pow
 +import kotlin.math.roundToInt
 +
-+/** HTTPS round trips are grouped by destination so natural differences between sites do not count as jitter. */
-+internal object ConnectionQuality {
-+    fun score(https: List<List<Long?>>, streaming: List<Boolean>): Int {
-+        val attempts = https.flatten()
-+        val received = attempts.count { it != null }
-+        if (received == 0 && streaming.none { it }) return 1
++/** A miss is an attempted application probe. A deadline or an invalid baseline yields no comparable result. */
++internal data class QualityProbe(
++    val millis: Double? = null,
++    val reused: Boolean = false,
++    val timeout: Boolean = false,
++    val incomplete: Boolean = false,
++    val reason: String = "",
++)
 +
-+        val availability = 60.0 * received / attempts.size
-+        val streams = 20.0 * streaming.count { it } / streaming.size
-+        val responsiveness = https.map { samples ->
-+            val times = samples.filterNotNull().sorted()
-+            if (times.size < 2) return@map 0.0
-+            val slowest = times.last()
-+            val spread = slowest - times.first()
-+            points(slowest, 150, 1_500) + points(spread, 40, 500)
-+        }.average()
-+        return (availability + streams + responsiveness).roundToInt().coerceIn(1, 100)
++internal data class StreamProbe(val description: String, val penalty: Int?, val reached: Boolean = false) {
++    companion object {
++        fun complete(maxGapMs: Double): StreamProbe {
++            val penalty = ceil((maxGapMs - 500.0).coerceAtLeast(0.0) / 60.0).toInt().coerceAtMost(15)
++            return StreamProbe("64 КиБ · пауза до ${maxGapMs.roundToInt()} мс", penalty, true)
++        }
 +    }
++}
 +
-+    private fun points(millis: Long, best: Long, worst: Long): Double =
-+        10.0 * ((worst - millis).toDouble() / (worst - best)).coerceIn(0.0, 1.0)
++internal data class GatewayProbe(val description: String, val restricted: Boolean = false, val reached: Boolean = false)
++internal data class QualityReport(val score: Int?, val details: String, val gatewayWarning: Boolean = false)
++
++internal object ConnectionQuality {
++    private fun number(n: Double?) = n?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "—"
++
++    fun evaluate(cold: QualityProbe, burst: List<QualityProbe>, stream: StreamProbe, gateway: GatewayProbe): QualityReport {
++        require(burst.size == 5)
++        val probes = listOf(cold) + burst
++        val warm = burst.map { probe -> probe.millis.takeIf { probe.reused } }
++        val sorted = warm.filterNotNull().sorted()
++        val median = if (sorted.isEmpty()) null else (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
++        val differences = warm.zipWithNext().mapNotNull { (a, b) -> if (a == null || b == null) null else abs(a - b) }
++        val jitter = differences.takeIf { it.isNotEmpty() }?.average()
++        val lost = probes.count { it.millis == null && !it.incomplete }
++        val lossPoints = when (lost) { 0 -> 35; 1 -> 20; 2 -> 8; else -> 0 }
++        val jitterPoints = when {
++            jitter == null || jitter >= 40 -> 0.0
++            jitter <= 4 -> 30.0
++            else -> 30 * (1 - ((jitter - 4) / 36).pow(0.85))
++        }
++        val latencyPoints = median?.let { 20 * ((350 - it) / 265).coerceIn(0.0, 1.0) } ?: 0.0
++        val ratio = median?.let { cold.millis?.div(it.coerceAtLeast(15.0)) }
++        val handshakePoints = when {
++            cold.millis == null -> 0.0
++            cold.millis <= 160 -> 15.0
++            ratio == null -> 0.0
++            else -> 15 * ((6 - ratio) / 4.2).coerceIn(0.0, 1.0)
++        }
++        val allTimedOut = probes.all { it.timeout } && !stream.reached && !gateway.reached
++        val score = when {
++            allTimedOut -> 0
++            probes.any { it.incomplete } || stream.penalty == null -> null
++            sorted.isEmpty() && lost < 6 -> null
++            else -> (lossPoints + jitterPoints + latencyPoints + handshakePoints - stream.penalty).roundToInt().coerceIn(1, 100)
++        }
++        val warning = lost == 0 && probes.none { it.incomplete } && stream.penalty == 0 && gateway.restricted
++        val finished = probes.count { !it.incomplete }
++        val details = listOf(
++            "Прогретая медиана · ${number(median)} мс  (${number(latencyPoints)}/20)",
++            "Джиттер · ${number(jitter)} мс  (${number(jitterPoints)}/30)",
++            "Холодный старт · ${number(cold.millis)} мс  (${number(handshakePoints)}/15)",
++            "Неудачные пробы · $lost/$finished  (" + (if (finished == 6) "$lossPoints/35" else "замер неполный") + ")",
++            "Ответы · " + burst.joinToString(" / ") {
++                when {
++                    it.millis == null -> it.reason
++                    it.reused -> number(it.millis)
++                    else -> "${number(it.millis)} (новое соединение)"
++                }
++            },
++            "Поток · ${stream.description}" + (stream.penalty?.let { "  (−$it)" } ?: ""),
++            "Шлюз · ${gateway.description}" + (if (warning) " · возможное ограничение выхода" else ""),
++        ).joinToString("\n")
++        return QualityReport(score, details, warning)
++    }
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityEnvironment.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityEnvironment.kt
+new file mode 100644
+index 0000000..ad07982
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityEnvironment.kt
+@@ -0,0 +1,33 @@
++package io.nekohasekai.sagernet.bg.test
++
++import android.content.Context
++import android.net.ConnectivityManager
++import android.net.NetworkCapabilities
++import android.os.BatteryManager
++import android.os.PowerManager
++import android.telephony.TelephonyManager
++import io.nekohasekai.sagernet.SagerNet
++
++internal object QualityEnvironment {
++    @Suppress("DEPRECATION")
++    fun describe(context: Context): String {
++        val cm = context.getSystemService(ConnectivityManager::class.java)
++        val network = SagerNet.underlyingNetwork ?: cm?.activeNetwork
++        val caps = cm?.getNetworkCapabilities(network)
++        val transport = when {
++            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
++            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true ->
++                when (cm?.getNetworkInfo(network)?.subtype) {
++                    TelephonyManager.NETWORK_TYPE_LTE -> "LTE"
++                    TelephonyManager.NETWORK_TYPE_NR -> "5G"
++                    else -> "Мобильная сеть"
++                }
++            caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
++            else -> "Сеть не определена"
++        }
++        val level = context.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
++        val saver = context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
++        return listOfNotNull(transport, level?.takeIf { it in 0..20 }?.let { "заряд $it%" },
++            "Энергосбережение".takeIf { saver }).joinToString(" · ")
++    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
 new file mode 100644
-index 0000000..0d2b6f2
+index 0000000..0a210db
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,252 @@
 +package io.nekohasekai.sagernet.bg.test
 +
 +import android.os.SystemClock
@@ -1582,14 +1681,17 @@ index 0000000..0d2b6f2
 +import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
 +import io.throneproj.mobile.Mobile
 +import kotlinx.coroutines.CancellationException
-+import kotlinx.coroutines.CompletableDeferred
-+import kotlinx.coroutines.withTimeoutOrNull
++import kotlinx.coroutines.delay
++import io.nekohasekai.sagernet.database.DataStore
++import io.nekohasekai.sagernet.SagerNet
++import io.nekohasekai.sagernet.ktx.app
 +import okhttp3.Credentials
 +import okhttp3.OkHttpClient
 +import okhttp3.Request
 +import okhttp3.Response
-+import okhttp3.WebSocket
-+import okhttp3.WebSocketListener
++import okhttp3.Connection
++import okhttp3.Call
++import java.io.InterruptedIOException
 +import java.io.IOException
 +import java.net.InetSocketAddress
 +import java.net.Proxy
@@ -1598,39 +1700,52 @@ index 0000000..0d2b6f2
 +
 +/** Measures only one saved profile at a time. The probe box's authenticated loopback inlet has an explicit exit. */
 +internal class QualityTestRunner(private val session: TestSession) {
++    @Volatile private var activeCall: Call? = null
++
++    fun cancel() { activeCall?.cancel() }
++
 +    suspend fun run(profiles: List<ProxyEntity>) {
 +        for (profile in profiles) {
 +            if (session.cancelled) break
-+            val score = try {
-+                measure(profile)
++            delay((nextProfileAt - SystemClock.elapsedRealtime()).coerceAtLeast(0))
++            if (session.cancelled) break
++            val network = SagerNet.underlyingNetwork
++            val environment = QualityEnvironment.describe(app)
++            val report = try {
++                val measured = measure(profile)
++                if (network != SagerNet.underlyingNetwork) QualityReport(null, "Во время замера сменилась сеть")
++                else measured
 +            } catch (e: CancellationException) {
 +                throw e
 +            } catch (e: Exception) {
 +                Logs.w(e)
-+                // The profile could not produce a usable test connection.
-+                1
++                QualityReport(null, "Не удалось запустить проверку профиля")
++            } finally {
++                // TestEngine holds its process-wide session mutex, including across successive sweeps.
++                nextProfileAt = SystemClock.elapsedRealtime() + 250
 +            }
-+            if (!session.cancelled) session.reportQuality(profile, score)
++            if (!session.cancelled) session.reportQuality(profile, report.copy(details = report.details + "\n" + environment))
 +        }
 +    }
 +
-+    private suspend fun measure(profile: ProxyEntity): Int {
++    private suspend fun measure(profile: ProxyEntity): QualityReport {
 +        val ports = PortLease()
 +        try {
 +            val generated = CoreConfigs.buildTest(listOf(profile.id), ports)
-+            if (!generated.ok || generated.skipped.containsKey(profile.id)) return 1
++            if (!generated.ok || generated.skipped.containsKey(profile.id)) return QualityReport(null, "Профиль не подготовлен к замеру")
 +            session.ensureSharedXrayAssets(generated.xrayConfig)
 +            for (config in generated.xrayFullConfigs) session.ensureSharedXrayAssets(config)
-+            if (session.cancelled) return 1
++            if (session.cancelled) return QualityReport(null, "Профиль не подготовлен к замеру")
 +
 +            val fullConfig = generated.fullConfigs[profile.id]
 +            val core = if (fullConfig == null) CoreConfig.from(generated) else CoreConfig(fullConfig)
 +            val config = JsonInput.parseObject(core.coreConfig)
 +            val route = config["route"] as? JsonObject ?: JsonObject().also { config["route"] = it }
-+            val exit = generated.outboundTags.singleOrNull() ?: defaultExit(config, route) ?: return 1
++            route["auto_detect_interface"] = true
++            val exit = generated.outboundTags.singleOrNull() ?: defaultExit(config, route) ?: return QualityReport(null, "Профиль не подготовлен к замеру")
 +
 +            val port = ports.reserve(1).single()
-+            if (port == 0) return 1
++            if (port == 0) return QualityReport(null, "Профиль не подготовлен к замеру")
 +            val password = UUID.randomUUID().toString()
 +            val inbounds = config.array("inbounds")
 +            inbounds.add(
@@ -1644,10 +1759,11 @@ index 0000000..0d2b6f2
 +            for (rule in route.array("rules")) rules.add(rule)
 +            route["rules"] = rules
 +
++            val start = SystemClock.elapsedRealtimeNanos()
 +            val instance = Mobile.newInstance(CoreRuntime.platform, core.copy(coreConfig = config.toCompact()).toStartOptions())
 +            try {
 +                instance.start()
-+                return probe(port, password)
++                return probe(port, password, start)
 +            } finally {
 +                runCatching { instance.close() }.onFailure { Logs.w(it) }
 +            }
@@ -1661,24 +1777,57 @@ index 0000000..0d2b6f2
 +            ?: (config.array("outbounds").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 +            ?: (config.array("endpoints").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 +
-+    private suspend fun probe(port: Int, password: String): Int {
++    private suspend fun probe(port: Int, password: String, start: Long): QualityReport {
 +        val credential = Credentials.basic(PROBE_USER, password)
++        var connection: Connection? = null
 +        val client = OkHttpClient.Builder()
 +            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port)))
 +            .proxyAuthenticator { _, response ->
 +                if (response.request.header("Proxy-Authorization") != null) null
 +                else response.request.newBuilder().header("Proxy-Authorization", credential).build()
 +            }
++            .addNetworkInterceptor { chain ->
++                connection = chain.connection()
++                chain.proceed(chain.request())
++            }
 +            .retryOnConnectionFailure(false)
 +            .followRedirects(false)
-+            .callTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-+            .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
 +            .build()
++        val deadline = start + 3_500 * NS_PER_MS
++        val baseline = Request.Builder().url(BASELINE).header("Cache-Control", "no-cache").build()
++        var previous: Connection? = null
++
++        fun baselineProbe(startTime: Long, timeout: Long): QualityProbe {
++            return try {
++                call(client, baseline, deadline, timeout) { response ->
++                    val ms = (SystemClock.elapsedRealtimeNanos() - startTime) / 1e6
++                    val reused = previous != null && previous === connection
++                    previous = connection
++                    if (response.code == 204) QualityProbe(ms, reused)
++                    else QualityProbe(incomplete = true, reason = "HTTP ${response.code}")
++                }
++            } catch (_: BudgetExpired) {
++                QualityProbe(incomplete = true, reason = "лимит времени")
++            } catch (_: InterruptedIOException) {
++                QualityProbe(timeout = true, reason = "таймаут")
++            } catch (_: IOException) {
++                QualityProbe(reason = "сбой")
++            }
++        }
++
 +        try {
-+            val https = HTTPS_SITES.map { url -> List(3) { if (session.cancelled) null else httpsTime(client, url) } }
-+            val ws = !session.cancelled && webSocketEcho(client)
-+            val sse = !session.cancelled && eventStream(client)
-+            return ConnectionQuality.score(https, listOf(ws, sse))
++            val coldBudget = 2000L - (SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS
++            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget)
++                else QualityProbe(incomplete = true, reason = "долгий старт ядра")
++            val burst = mutableListOf<QualityProbe>()
++            repeat(5) { index ->
++                if (index > 0) delay(((deadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
++                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500)
++            }
++            val stream = streamProbe(client, deadline)
++            val gateway = gatewayProbe(client, deadline)
++            val report = ConnectionQuality.evaluate(cold, burst, stream, gateway)
++            return report.copy(details = report.details + "\nЗамер · ${(SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS} мс")
 +        } finally {
 +            client.dispatcher.cancelAll()
 +            client.connectionPool.evictAll()
@@ -1686,71 +1835,86 @@ index 0000000..0d2b6f2
 +        }
 +    }
 +
-+    private fun httpsTime(client: OkHttpClient, url: String): Long? = try {
-+        val start = SystemClock.elapsedRealtime()
-+        client.newCall(Request.Builder().url(url).header("Cache-Control", "no-cache").build()).execute().use {
-+            if (it.code == 204) SystemClock.elapsedRealtime() - start else null
-+        }
-+    } catch (_: IOException) {
-+        null
-+    }
++    private class BudgetExpired : IOException()
 +
-+    private suspend fun webSocketEcho(client: OkHttpClient): Boolean {
-+        val answer = CompletableDeferred<Boolean>()
-+        val challenge = UUID.randomUUID().toString()
-+        val socket = client.newWebSocket(Request.Builder().url("wss://echo.websocket.org").build(), object : WebSocketListener() {
-+            override fun onOpen(webSocket: WebSocket, response: Response) {
-+                if (!webSocket.send(challenge)) answer.complete(false)
++    private fun <T> call(client: OkHttpClient, request: Request, deadline: Long, timeoutMs: Long, read: (Response) -> T): T {
++        val remaining = deadline - SystemClock.elapsedRealtimeNanos()
++        if (remaining <= 0) throw BudgetExpired()
++        val limit = minOf(remaining, timeoutMs * NS_PER_MS)
++        val call = client.newCall(request)
++        call.timeout().timeout(limit, TimeUnit.NANOSECONDS)
++        activeCall = call
++        try {
++            if (session.cancelled) throw CancellationException()
++            return call.execute().use(read)
++        } catch (e: IOException) {
++            if (session.cancelled) throw CancellationException()
++            if (limit == remaining && (SystemClock.elapsedRealtimeNanos() >= deadline || e is InterruptedIOException)) {
++                throw BudgetExpired()
 +            }
-+
-+            override fun onMessage(webSocket: WebSocket, text: String) {
-+                if (text == challenge) answer.complete(true)
-+            }
-+
-+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-+                answer.complete(false)
-+            }
-+
-+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-+                answer.complete(false)
-+            }
-+        })
-+        return try {
-+            withTimeoutOrNull(TIMEOUT_MS) { answer.await() } == true
++            throw e
 +        } finally {
-+            socket.cancel()
++            activeCall = null
 +        }
 +    }
 +
-+    private fun eventStream(client: OkHttpClient): Boolean {
++    private fun streamProbe(client: OkHttpClient, deadline: Long): StreamProbe {
++        val request = Request.Builder().url(STREAM).header("Accept-Encoding", "identity").build()
++        var received = 0
++        var reached = false
 +        return try {
-+            val request = Request.Builder().url("https://echo.websocket.org/.sse")
-+                .header("Accept", "text/event-stream").build()
-+            client.newCall(request).execute().use { response ->
-+                val body = response.body ?: return false
-+                if (!response.isSuccessful || !response.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
-+                    return false
++            call(client, request, deadline, 1500) { response ->
++                reached = true
++                val body = response.body
++                if (response.code != 200 || body == null) return@call StreamProbe("HTTP ${response.code}", null, true)
++                if (response.header("Content-Type").orEmpty().startsWith("text/html")) {
++                    return@call StreamProbe("вместо блока получена HTML-страница", null, true)
 +                }
-+                val source = body.source()
-+                var hasData = false
-+                repeat(24) {
-+                    val line = source.readUtf8LineStrict(4096)
-+                    if (line.isEmpty() && hasData) return true
-+                    if (line.startsWith("data:") && line.substringAfter(':').isNotBlank()) hasData = true
++                val buffer = ByteArray(8192)
++                val input = body.byteStream()
++                var previous = SystemClock.elapsedRealtimeNanos()
++                var maxGap = 0L
++                while (received < STREAM_BYTES) {
++                    val count = input.read(buffer, 0, minOf(buffer.size, STREAM_BYTES - received))
++                    if (count < 0) return@call StreamProbe("обрыв · $received Б", 15, true)
++                    val now = SystemClock.elapsedRealtimeNanos()
++                    maxGap = maxOf(maxGap, now - previous)
++                    previous = now
++                    received += count
 +                }
-+                false
++                StreamProbe.complete(maxGap / 1e6)
 +            }
++        } catch (_: BudgetExpired) {
++            StreamProbe("лимит времени · $received Б", null, reached)
 +        } catch (_: IOException) {
-+            false
++            StreamProbe("сбой потока · $received Б", 15, reached)
++        }
++    }
++
++    private fun gatewayProbe(client: OkHttpClient, deadline: Long): GatewayProbe {
++        val request = Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
++        return try {
++            call(client, request, deadline, 1000) {
++                GatewayProbe("HTTP ${it.code}", it.code == 403 || it.code == 503, true)
++            }
++        } catch (_: BudgetExpired) {
++            GatewayProbe("не измерен · лимит времени")
++        } catch (_: InterruptedIOException) {
++            GatewayProbe("таймаут", restricted = true)
++        } catch (_: IOException) {
++            GatewayProbe("ошибка соединения")
 +        }
 +    }
 +
 +    private companion object {
-+        const val TIMEOUT_MS = 5_000L
++        var nextProfileAt = 0L
++        const val NS_PER_MS = 1_000_000L
 +        const val LOOPBACK = "127.0.0.1"
 +        const val PROBE_USER = "quality"
 +        const val PROBE_INBOUND = "throne-quality-probe"
-+        val HTTPS_SITES = listOf("https://cp.cloudflare.com/generate_204", "https://www.gstatic.com/generate_204")
++        const val BASELINE = "https://cp.cloudflare.com/generate_204"
++        const val STREAM_BYTES = 65536
++        const val STREAM = "https://speed.cloudflare.com/__down?bytes=65536"
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt
@@ -1766,10 +1930,23 @@ index 9ae069d..32fcae8 100644
              }
          )
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt
-index 6af9a5a..cd700e6 100644
+index 6af9a5a..2e31856 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestSession.kt
-@@ -125,7 +125,7 @@ internal class TestSession(
+@@ -94,9 +94,11 @@ internal class TestSession(
+     private var tested: Map<Long, ProxyEntity> = emptyMap()
+ 
+     /** stop(): the core cancels the tests in flight, the sweep starts nothing new. */
++    private val qualityRunner by lazy { QualityTestRunner(this) }
++
+     fun stop() {
+         cancelled = true
+-        Mobile.stopTests()
++        if (kind == TestSpec.KIND_QUALITY) qualityRunner.cancel() else Mobile.stopTests()
+     }
+ 
+     suspend fun run() {
+@@ -125,7 +127,7 @@ internal class TestSession(
      /** TestRunner.cpp: kept sorts move once the run is over, so rows do not jump while results stream in. */
      private fun repositionTested() {
          // the running connection's URL and IP results are shown, never stored; no sort reads a service check
@@ -1778,27 +1955,33 @@ index 6af9a5a..cd700e6 100644
          val changed = tested.values.groupBy({ it.groupId }, { it.id })
          GroupSort.repositionLater(changed, SortInput.TEST_RESULT)
          // A speed test also credits the traffic it moved.
-@@ -186,6 +186,7 @@ internal class TestSession(
+@@ -186,6 +188,7 @@ internal class TestSession(
              TestSpec.KIND_IP -> IpTestRunner(this).run(profiles)
              TestSpec.KIND_SPEED -> SpeedTestRunner(this).run(profiles)
              TestSpec.KIND_SERVICE -> ServiceTestRunner(this).runChecks(profiles)
-+            TestSpec.KIND_QUALITY -> QualityTestRunner(this).run(profiles)
++            TestSpec.KIND_QUALITY -> qualityRunner.run(profiles)
          }
      }
  
-@@ -296,6 +297,17 @@ internal class TestSession(
+@@ -296,6 +299,23 @@ internal class TestSession(
          }
      }
  
-+    fun reportQuality(profile: ProxyEntity, score: Int) {
++    fun reportQuality(profile: ProxyEntity, report: QualityReport) {
 +        val saved = try {
-+            SagerDatabase.proxyDao.updateQualityScore(profile.id, profile.outboundJson, score) > 0
++            SagerDatabase.proxyDao.updateQualityScore(profile.id, profile.outboundJson, report.score ?: -1, report.details, report.gatewayWarning) > 0
 +        } catch (e: SQLException) {
 +            Logs.w(e)
 +            false
 +        }
-+        counted(saved, false)
-+        notifyClient { it.onServiceResult(profile.id, if (saved) "" else ERROR_ABORTED) }
++        val error = when {
++            !saved -> ERROR_ABORTED
++            report.score == null -> "Неполный замер"
++            report.score == 0 -> "Узел недоступен"
++            else -> ""
++        }
++        counted(error.isEmpty(), saved && error.isNotEmpty())
++        notifyClient { it.onServiceResult(profile.id, error) }
 +    }
 +
      /** applyServiceResult (TestRunner.cpp:232-242): an aborted check stores nothing and keeps the previous one. */
@@ -2454,7 +2637,7 @@ index 0000000..3f73c22
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt b/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt
-index c0a25da..9bc4e27 100644
+index c0a25da..fa6ac72 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/DataStore.kt
 @@ -61,8 +61,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
@@ -2478,7 +2661,15 @@ index c0a25da..9bc4e27 100644
      var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
  
      var showGroupInNotification by configurationStore.boolean(Key.SHOW_GROUP_IN_NOTIFICATION)
-@@ -336,7 +329,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
+@@ -255,6 +248,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
+     var quicDisablePathMtuDiscovery by SettingsRegistry.QUIC_DISABLE_PATH_MTU_DISCOVERY
+ 
+     // testing
++    var qualityGatewayUrl by SettingsRegistry.QUALITY_GATEWAY_URL
+     var testUrl by SettingsRegistry.TEST_URL
+     var urlTestTimeoutMs by SettingsRegistry.URL_TEST_TIMEOUT_MS
+     var testConcurrent by SettingsRegistry.TEST_CONCURRENT
+@@ -336,7 +330,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
      val clashApiEnabled: Boolean get() = coreBoxClashApi > 0
  
      /** core_box_api_port is on: the sing-box API serves the dashboard on that loopback port. */
@@ -2503,18 +2694,20 @@ index 3ea7f5c..e48f57a 100644
  
      // postUpdate: post to listeners, don't change the DB
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
-index 9eebe31..11e95b3 100644
+index 9eebe31..f74ef22 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/ProxyEntity.kt
-@@ -66,6 +66,7 @@ data class ProxyEntity(
+@@ -66,6 +66,9 @@ data class ProxyEntity(
      @ColumnInfo(name = "test_error") var testError: String? = null,
      /** The desktop's `service_checks`: the results of the per-service reachability checks. */
      @ColumnInfo(name = "service_checks", defaultValue = "") var serviceChecks: String = "",
 +    @ColumnInfo(name = "quality_score", defaultValue = "0") var qualityScore: Int = 0,
++    @ColumnInfo(name = "quality_detail", defaultValue = "") var qualityDetail: String = "",
++    @ColumnInfo(name = "quality_gateway_warning", defaultValue = "0") var qualityGatewayWarning: Boolean = false,
  ) : Parcelable {
  
      @IgnoredOnParcel
-@@ -292,9 +293,6 @@ data class ProxyEntity(
+@@ -292,9 +295,6 @@ data class ProxyEntity(
      @androidx.room.Dao
      interface Dao {
  
@@ -2524,39 +2717,39 @@ index 9eebe31..11e95b3 100644
          @Query("SELECT `id` FROM `profiles` WHERE `gid` = :groupId ORDER BY `user_order`, `id`")
          fun getIdsByGroup(groupId: Long): List<Long>
  
-@@ -349,7 +347,7 @@ data class ProxyEntity(
+@@ -349,7 +349,7 @@ data class ProxyEntity(
          @Query(
              "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
                  "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
 -                "NULL AS `test_error`, '' AS `service_checks` FROM `profiles` WHERE `gid` = :groupId"
-+                "NULL AS `test_error`, '' AS `service_checks`, `quality_score` FROM `profiles` WHERE `gid` = :groupId"
++                "NULL AS `test_error`, '' AS `service_checks`, `quality_score`, `quality_detail`, `quality_gateway_warning` FROM `profiles` WHERE `gid` = :groupId"
          )
          fun getWithoutDataByGroup(groupId: Long): List<ProxyEntity>
  
-@@ -357,7 +355,7 @@ data class ProxyEntity(
+@@ -357,7 +357,7 @@ data class ProxyEntity(
          @Query(
              "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
                  "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
 -                "NULL AS `test_error`, '' AS `service_checks` FROM `profiles` WHERE `id` IN (:proxyIds)"
-+                "NULL AS `test_error`, '' AS `service_checks`, `quality_score` FROM `profiles` WHERE `id` IN (:proxyIds)"
++                "NULL AS `test_error`, '' AS `service_checks`, `quality_score`, `quality_detail`, `quality_gateway_warning` FROM `profiles` WHERE `id` IN (:proxyIds)"
          )
          fun getWithoutData(proxyIds: List<Long>): List<ProxyEntity>
  
-@@ -397,7 +395,7 @@ data class ProxyEntity(
+@@ -397,7 +397,7 @@ data class ProxyEntity(
          fun setGroup(proxyId: Long, groupId: Long, order: Long)
  
          /** New data for a profile in place (subscription update, resolved address): test results and traffic stay. */
 -        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson WHERE `id` = :proxyId")
-+        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson, `quality_score` = CASE WHEN `outbound_json` = :outboundJson THEN `quality_score` ELSE 0 END WHERE `id` = :proxyId")
++        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson, `quality_score` = CASE WHEN `outbound_json` = :outboundJson THEN `quality_score` ELSE 0 END, quality_detail = CASE WHEN outbound_json = :outboundJson THEN quality_detail ELSE '' END, quality_gateway_warning = CASE WHEN outbound_json = :outboundJson THEN quality_gateway_warning ELSE 0 END WHERE `id` = :proxyId")
          fun updateOutbound(proxyId: Long, type: String, name: String?, outboundJson: String): Int
  
          @Query("UPDATE `profiles` SET `traffic_dl` = :rx, `traffic_up` = :tx WHERE `id` = :proxyId")
-@@ -432,24 +430,20 @@ data class ProxyEntity(
+@@ -432,24 +432,20 @@ data class ProxyEntity(
          )
          fun updateLatency(proxyId: Long, latency: Int, latencyAt: Long, testError: String?): Int
  
-+        @Query("UPDATE `profiles` SET `quality_score` = :score WHERE `id` = :id AND `outbound_json` = :outboundJson")
-+        fun updateQualityScore(id: Long, outboundJson: String, score: Int): Int
++        @Query("UPDATE `profiles` SET `quality_score` = :score, quality_detail = :details, quality_gateway_warning = :warning WHERE `id` = :id AND `outbound_json` = :outboundJson")
++        fun updateQualityScore(id: Long, outboundJson: String, score: Int, details: String, warning: Boolean): Int
 +
          /** TestRunner::applyServiceResult: the `service_checks` document alone. */
          @Query("UPDATE `profiles` SET `service_checks` = :document WHERE `id` = :proxyId")
@@ -2565,7 +2758,7 @@ index 9eebe31..11e95b3 100644
          @Query(
              "UPDATE `profiles` SET `latency` = 0, `latency_at` = 0, `dl_speed` = NULL, `ul_speed` = NULL, " +
 -                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '' " +
-+                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0 " +
++                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0, quality_detail = '', quality_gateway_warning = 0 " +
                  "WHERE `id` IN (:profileIds)"
          )
          fun clearTestResults(profileIds: List<Long>): Int
@@ -2581,7 +2774,7 @@ index 9eebe31..11e95b3 100644
          fun addProxy(proxy: ProxyEntity): Long
  
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt b/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt
-index 9d0d649..150ee35 100644
+index 9d0d649..d46e3dd 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/SagerDatabase.kt
 @@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
@@ -2589,7 +2782,7 @@ index 9d0d649..150ee35 100644
          SettingEntry::class, MarkerEntity::class,
      ],
 -    version = 20,
-+    version = 21,
++    version = 22,
      autoMigrations = [
          AutoMigration(from = 8, to = 9),
          AutoMigration(from = 12, to = 13),
@@ -2598,14 +2791,21 @@ index 9d0d649..150ee35 100644
              Room.databaseBuilder(SagerNet.application, SagerDatabase::class.java, Key.DB_PROFILE)
                  .addMigrations(
 -                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
-+                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
++                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                  )
                  .addCallback(callback)
                  // both processes use the file: WAL lets readers in either one run while the other writes
-@@ -214,6 +214,12 @@ abstract class SagerDatabase : RoomDatabase() {
+@@ -214,6 +214,19 @@ abstract class SagerDatabase : RoomDatabase() {
                  .build()
  
          // Failures are logged with android.util.Log: Logs reads the log level from the settings in this database.
++        val MIGRATION_21_22 = object : Migration(21, 22) {
++            override fun migrate(db: SupportSQLiteDatabase) {
++                db.execSQL("ALTER TABLE profiles ADD COLUMN quality_detail TEXT NOT NULL DEFAULT ''")
++                db.execSQL("ALTER TABLE profiles ADD COLUMN quality_gateway_warning INTEGER NOT NULL DEFAULT 0")
++            }
++        }
++
 +        val MIGRATION_20_21: Migration = object : Migration(20, 21) {
 +            override fun migrate(db: SupportSQLiteDatabase) {
 +                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `quality_score` INTEGER NOT NULL DEFAULT 0")
@@ -2616,10 +2816,20 @@ index 9d0d649..150ee35 100644
              SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
              val db = buildProfileDatabase()
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt b/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
-index 89da43c..e3ce820 100644
+index 89da43c..b9cb20c 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
-@@ -337,23 +337,11 @@ object SettingsRegistry {
+@@ -263,6 +263,9 @@ object SettingsRegistry {
+ 
+     // ------------------------------------------------------------------------------------------------ testing
+ 
++    @JvmField val QUALITY_GATEWAY_URL = string("quality_gateway_url", "https://alkalimakersuite-pa.clients6.google.com/") {
++        it.startsWith("https://", ignoreCase = true) && SpeedTestSettings.isValidHttpUrl(it)
++    }
+     @JvmField val TEST_URL = string("test_url", "http://cp.cloudflare.com/") { it.isNotBlank() }
+     @JvmField val URL_TEST_TIMEOUT_MS = int("url_test_timeout_ms", 3000) { it > 0 }
+     @JvmField val TEST_CONCURRENT = int("test_concurrent", 10) { it > 0 }
+@@ -337,23 +340,11 @@ object SettingsRegistry {
      @JvmField val XRAY_LOG_LEVEL = oneOf("xray_log_level", "warning", XRAY_LOG_LEVELS)
      @JvmField val ENABLE_STATS = bool("enable_stats", true)
      @JvmField val DISABLE_TRAFFIC_STATS = bool("disable_traffic_stats", false)
@@ -2644,7 +2854,7 @@ index 89da43c..e3ce820 100644
      @JvmField val CORE_BOX_API_PORT = int("core_box_api_port", 9091) { it in -65535..65535 }
      /** Generated on first use when empty (SettingsRepo.cpp:15-19). */
      @JvmField val CORE_BOX_API_SECRET = string("core_box_api_secret", "")
-@@ -379,14 +367,13 @@ object SettingsRegistry {
+@@ -379,14 +370,13 @@ object SettingsRegistry {
          Key.SERVICE_MODE, Key.PROXY_APPS, Key.BYPASS_MODE, Key.INDIVIDUAL, Key.APPEND_HTTP_PROXY, Key.HTTP_PROXY_BYPASS,
          Key.METERED_NETWORK, Key.ALLOW_BYPASS, Key.WAKE_RESET_CONNECTIONS, Key.NETWORK_CHANGE_RESET_CONNECTIONS,
          Key.SHOW_DIRECT_SPEED, Key.SHOW_GROUP_IN_NOTIFICATION, Key.NOTIFICATION_ACTIONS,
@@ -2660,7 +2870,7 @@ index 89da43c..e3ce820 100644
      )
  
      /**
-@@ -397,7 +384,7 @@ object SettingsRegistry {
+@@ -397,7 +387,7 @@ object SettingsRegistry {
      val DEVICE_LOCAL_KEYS: Set<String> = setOf(
          Key.WEBDAV_SERVER, Key.WEBDAV_USERNAME, Key.WEBDAV_PASSWORD, Key.WEBDAV_PATH, Key.DEVICE_ID, Key.DEVICE_NAME,
          Key.BATTERY_PROMPT_SHOWN, Key.HWID_FALLBACK, Key.RESUME_AFTER_UPDATE, Key.UPDATE_SKIPPED_VERSION_CODE,
@@ -4893,7 +5103,7 @@ index c1729cc..fe9a581 100644
          menu.findItem(R.id.action_pin).setTitle(if (pinned) R.string.profiles_unpin else R.string.profiles_pin)
          // TV only, where a D-pad cannot drag; a filtered list says nothing about the stored order. Never across the pinned edge.
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
-index 85acd8c..f845968 100644
+index 85acd8c..3516997 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/profiles/ProfileRowHolder.kt
 @@ -230,11 +230,11 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
@@ -4919,18 +5129,34 @@ index 85acd8c..f845968 100644
          shareButton.setOnClickListener { button ->
              boundProfile?.let { adapter.host?.itemMenu?.showShare(button, it) }
          }
-@@ -308,6 +305,10 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+@@ -281,6 +278,13 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+             val text = boundProfile?.testError
+             if (!text.isNullOrBlank()) it.context.alert(text).tryToShow()
+         }
++        qualityScore.setOnClickListener { view ->
++            boundProfile?.let { row ->
++                view.context.alert(row.qualityDetail.ifEmpty {
++                    "Оценка сохранена предыдущей версией. Запустите новый замер для разбивки."
++                }).tryToShow()
++            }
++        }
+         result.setOnClickListener(showError)
+         error.setOnClickListener(showError)
+         result.isFocusable = false
+@@ -308,6 +312,12 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
          result.contentDescription = content.resultDescription
          result.alpha = if (content.resultDimmed) 0.5f else 1f
          result.isVisible = content.result.isNotEmpty()
-+        qualityScore.isVisible = profile.qualityScore in 1..100
++        qualityScore.isVisible = profile.qualityDetail.isNotEmpty() || profile.qualityScore in 1..100
 +        qualityScore.text = if (qualityScore.isVisible) {
-+            itemView.context.getString(R.string.connection_quality_score, profile.qualityScore)
++            val score = if (profile.qualityScore < 0) "—/100"
++                else itemView.context.getString(R.string.connection_quality_score, profile.qualityScore)
++            if (profile.qualityGatewayWarning) "$score ⚠" else score
 +        } else ""
          testProgress.isVisible = content.testing
          traffic.text = content.traffic
          traffic.contentDescription = content.trafficDescription
-@@ -332,7 +333,7 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+@@ -332,7 +342,7 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
          placeholder = true
          name.text = ""
          type.text = ""
@@ -4939,7 +5165,7 @@ index 85acd8c..f845968 100644
              view.isVisible = false
          }
          applyCardColors(selected = false, checked = false)
-@@ -363,7 +364,6 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
+@@ -363,7 +373,6 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
          val buttons = !host.select && !selecting
          selectCheck.isVisible = selecting
          selectCheck.isChecked = selecting && host.selection.isChecked(id)
@@ -5075,7 +5301,7 @@ index df9a7cb..91ae855 100644
      fun unknownRuleSets(entries: List<String>, catalog: RuleSetCatalog): List<String> = entries.map { it.trim() }
          .filter { it.isNotEmpty() && RouteRule.checkValue("rule_set", it, catalog)?.severity == Severity.Error }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
-index 5d05dd5..580e355 100644
+index 5d05dd5..7538605 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/settings/CoreSettingsScreens.kt
 @@ -21,13 +21,7 @@ import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeLi
@@ -5092,7 +5318,7 @@ index 5d05dd5..580e355 100644
  import io.nekohasekai.sagernet.ui.profile.keepUnlistedValue
  import io.nekohasekai.sagernet.validation.Empty
  import io.nekohasekai.sagernet.validation.Validation
-@@ -38,149 +32,6 @@ import moe.matsuri.nb4a.ui.SimpleMenuPreference
+@@ -38,154 +32,15 @@ import moe.matsuri.nb4a.ui.SimpleMenuPreference
  import moe.matsuri.nb4a.ui.UrlTestPreference
  import kotlin.math.abs
  
@@ -5242,7 +5468,16 @@ index 5d05dd5..580e355 100644
  /** Basic Settings › Common › Testing. */
  class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
  
-@@ -253,7 +104,7 @@ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
+     override fun bind() {
+         bindUrlTest()
++        gateText(
++            SettingsRegistry.QUALITY_GATEWAY_URL.key, Validation.Rules.url(listOf("https"), Empty.Required),
++            reload = false, invalid = R.string.speed_test_url_invalid,
++        ) { it.startsWith("https://", ignoreCase = true) && SpeedTestSettings.isValidHttpUrl(it) }
+         gateText(
+             SettingsRegistry.DIRECT_TEST_URL.key, Validation.Rules.url(SettingChecks.HTTP), reload = false,
+             invalid = R.string.speed_test_url_invalid,
+@@ -253,7 +108,7 @@ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
  }
  
  /**
@@ -5251,7 +5486,7 @@ index 5d05dd5..580e355 100644
   * certificate defaults and the NTP client.
   */
  class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
-@@ -314,7 +165,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -314,7 +169,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
          )
  
          bindClashApi()
@@ -5260,7 +5495,7 @@ index 5d05dd5..580e355 100644
          bindNtp()
      }
  
-@@ -363,10 +214,10 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -363,10 +218,10 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
      }
  
      /**
@@ -5273,7 +5508,7 @@ index 5d05dd5..580e355 100644
          val enabled = pref<SwitchPreference>(KEY_API_ENABLED)
          val port = pref<EditTextPreference>(KEY_API_PORT)
          val secret = pref<EditTextPreference>(SettingsRegistry.CORE_BOX_API_SECRET.key)
-@@ -376,7 +227,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -376,7 +231,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
              secret.isEnabled = on
          }
  
@@ -5282,7 +5517,7 @@ index 5d05dd5..580e355 100644
          port.text = portValue().toString()
          port.summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
          port.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-@@ -388,7 +239,6 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -388,7 +243,6 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
              val on = newValue as Boolean
              DataStore.coreBoxApiPort = if (on) portValue() else -portValue()
              sync(on)
@@ -5290,7 +5525,7 @@ index 5d05dd5..580e355 100644
              needReload()
              true
          }
-@@ -445,7 +295,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
+@@ -445,7 +299,7 @@ class CoreSettingsFragment : SettingsScreenFragment(R.xml.settings_core) {
      private companion object {
          const val KEY_CLASH_ENABLED = "coreClashApiEnabled"
          const val KEY_CLASH_PORT = "coreClashApiPort"
@@ -5920,14 +6155,36 @@ index 6862508..ee0f18a 100644
          }
      )
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt
-index 93068cf..08e6c59 100644
+index 93068cf..0939075 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/ui/test/TestPanelController.kt
-@@ -748,6 +748,7 @@ class TestPanelController(
+@@ -726,10 +726,21 @@ class TestPanelController(
+ 
+     // ------------------------------------------------------------------------------------------------ texts
+ 
++    private var environmentAt = Long.MIN_VALUE
++    private var qualityEnvironment = ""
++    private fun environment(s: TestUiState): String {
++        if (environmentAt != s.startedAt) {
++            qualityEnvironment = io.nekohasekai.sagernet.bg.test.QualityEnvironment.describe(context)
++            environmentAt = s.startedAt
++        }
++        return qualityEnvironment
++    }
++
+     private fun progressText(s: TestUiState): String {
+         val elapsed = System.currentTimeMillis() - s.startedAt
+         val text = StringBuilder(context.getString(R.string.test_panel_progress, s.done, s.total))
+         text.append(SEP).append(TestFormat.clock(elapsed))
++        if (s.kind == TestSpec.KIND_QUALITY) text.append(SEP).append(environment(s))
+         if (s.stopping) {
+             text.append(SEP).append(context.getString(R.string.test_panel_stopping))
+         } else if (s.done > 0 && s.pending > 0 && elapsed >= MIN_ETA_ELAPSED_MS) {
+@@ -748,6 +759,7 @@ class TestPanelController(
          } else {
              context.getString(R.string.test_panel_summary_tested, tested, elapsed)
          }
-+        if (s.kind == TestSpec.KIND_QUALITY) return head
++        if (s.kind == TestSpec.KIND_QUALITY) return head + SEP + environment(s)
          val tail = when {
              s.kind == TestSpec.KIND_IP -> if (s.ok > 0) {
                  context.getString(R.string.test_panel_summary_resolved, s.ok, s.countries.size)
@@ -14079,6 +14336,85 @@ index 7cf166d..0000000
 -            app:title="@string/hysteria_disable_mtu_discovery" />
 -    </PreferenceCategory>
 -</PreferenceScreen>
+diff --git a/app/src/main/res/xml/settings_testing.xml b/app/src/main/res/xml/settings_testing.xml
+index eeb6642..c44a8cb 100644
+--- a/app/src/main/res/xml/settings_testing.xml
++++ b/app/src/main/res/xml/settings_testing.xml
+@@ -6,6 +6,10 @@
+             app:key="test_url"
+             app:title="@string/connection_test_url"
+             app:useSimpleSummaryProvider="true" />
++        <EditTextPreference
++            app:key="quality_gateway_url"
++            app:title="Шлюз для проверки качества"
++            app:useSimpleSummaryProvider="true" />
+         <EditTextPreference
+             app:dialogMessage="@string/direct_test_url_sum"
+             app:key="direct_test_url"
+diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/test/ConnectionQualityTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/test/ConnectionQualityTest.kt
+new file mode 100644
+index 0000000..95937a8
+--- /dev/null
++++ b/app/src/test/java/io/nekohasekai/sagernet/bg/test/ConnectionQualityTest.kt
+@@ -0,0 +1,58 @@
++package io.nekohasekai.sagernet.bg.test
++
++import org.junit.Assert.*
++import org.junit.Test
++
++class ConnectionQualityTest {
++    private val cold = QualityProbe(145.0)
++    private val burst = List(5) { QualityProbe(80.0, reused = true) }
++    private val stream = StreamProbe.complete(40.0)
++    private val gateway = GatewayProbe("HTTP 200", reached = true)
++
++    @Test fun plateauAndIndependentGateway() {
++        for (code in listOf(403, 503)) {
++            val report = ConnectionQuality.evaluate(cold, burst, stream, GatewayProbe("HTTP $code", true, true))
++            assertEquals(100, report.score)
++            assertTrue(report.gatewayWarning)
++        }
++        assertEquals(100, ConnectionQuality.evaluate(cold, burst, stream, GatewayProbe("лимит времени")).score)
++    }
++
++    @Test fun lossJitterAndStreamStallAffectSeparateComponents() {
++        val loss = burst.toMutableList().apply { this[2] = QualityProbe(timeout = true) }
++        assertEquals(85, ConnectionQuality.evaluate(cold, loss, stream, gateway).score)
++        loss[1] = QualityProbe(timeout = true)
++        assertEquals(73, ConnectionQuality.evaluate(cold, loss, stream, gateway).score)
++        val unstable = listOf(60, 100, 60, 100, 60).map { QualityProbe(it.toDouble(), true) }
++        assertEquals(70, ConnectionQuality.evaluate(cold, unstable, stream, gateway).score)
++        assertEquals(100, ConnectionQuality.evaluate(cold, burst, StreamProbe.complete(500.0), gateway).score)
++        val stalled = ConnectionQuality.evaluate(cold, burst, StreamProbe.complete(1400.0), GatewayProbe("HTTP 403", true, true))
++        assertEquals(85, stalled.score)
++        assertFalse(stalled.gatewayWarning)
++    }
++
++    @Test fun reconnectAndDeadlineAreNotWarmSamplesOrLoss() {
++        val replaced = burst.toMutableList().apply { this[2] = QualityProbe(900.0) }
++        assertEquals(100, ConnectionQuality.evaluate(cold, replaced, stream, gateway).score)
++        val unknown = burst.toMutableList().apply { this[4] = QualityProbe(incomplete = true) }
++        assertNull(ConnectionQuality.evaluate(cold, unknown, stream, gateway).score)
++        assertNull(ConnectionQuality.evaluate(cold, burst, StreamProbe("лимит", null), gateway).score)
++        assertNull(ConnectionQuality.evaluate(cold, List(5) { QualityProbe(80.0) }, stream, gateway).score)
++    }
++
++    @Test fun allTimedOutAndContradictoryReachability() {
++        val timeout = QualityProbe(timeout = true)
++        val failed = StreamProbe("обрыв", 15)
++        assertEquals(0, ConnectionQuality.evaluate(timeout, List(5) { timeout }, failed, GatewayProbe("таймаут")).score)
++        assertEquals(1, ConnectionQuality.evaluate(timeout, List(5) { timeout }, failed, gateway).score)
++    }
++
++    @Test fun latencyAndHandshakeBoundaries() {
++        fun score(ms: Double, start: Double) = ConnectionQuality.evaluate(
++            QualityProbe(start), List(5) { QualityProbe(ms, true) }, stream, gateway).score
++        assertEquals(100, score(85.0, 160.0))
++        assertEquals(65, score(350.0, 2100.0))
++        assertEquals(85, score(80.0, 480.0))
++        assertEquals(100, score(10.0, 160.0))
++    }
++}
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
 new file mode 100644
 index 0000000..12edd03
@@ -14358,7 +14694,7 @@ index 354bad0..5da7f53 100644
                      .replace("-oss", "")
              }
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..462ae75 100644
+index 751051e..041a720 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -14366,8 +14702,8 @@ index 751051e..462ae75 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.20
-+VERSION_CODE=133
++VERSION_NAME=2.0.7-quality.21
++VERSION_CODE=134
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file
 diff --git a/openspec/specs/app-widgets/spec.md b/openspec/specs/app-widgets/spec.md

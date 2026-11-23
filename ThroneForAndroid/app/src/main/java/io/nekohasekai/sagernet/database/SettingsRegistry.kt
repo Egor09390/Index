@@ -263,6 +263,9 @@ object SettingsRegistry {
 
     // ------------------------------------------------------------------------------------------------ testing
 
+    @JvmField val QUALITY_GATEWAY_URL = string("quality_gateway_url", "https://alkalimakersuite-pa.clients6.google.com/") {
+        it.startsWith("https://", ignoreCase = true) && SpeedTestSettings.isValidHttpUrl(it)
+    }
     @JvmField val TEST_URL = string("test_url", "http://cp.cloudflare.com/") { it.isNotBlank() }
     @JvmField val URL_TEST_TIMEOUT_MS = int("url_test_timeout_ms", 3000) { it > 0 }
     @JvmField val TEST_CONCURRENT = int("test_concurrent", 10) { it > 0 }

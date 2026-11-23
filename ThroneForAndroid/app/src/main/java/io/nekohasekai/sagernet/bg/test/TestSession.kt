@@ -94,9 +94,11 @@ internal class TestSession(
     private var tested: Map<Long, ProxyEntity> = emptyMap()
 
     /** stop(): the core cancels the tests in flight, the sweep starts nothing new. */
+    private val qualityRunner by lazy { QualityTestRunner(this) }
+
     fun stop() {
         cancelled = true
-        Mobile.stopTests()
+        if (kind == TestSpec.KIND_QUALITY) qualityRunner.cancel() else Mobile.stopTests()
     }
 
     suspend fun run() {
@@ -186,7 +188,7 @@ internal class TestSession(
             TestSpec.KIND_IP -> IpTestRunner(this).run(profiles)
             TestSpec.KIND_SPEED -> SpeedTestRunner(this).run(profiles)
             TestSpec.KIND_SERVICE -> ServiceTestRunner(this).runChecks(profiles)
-            TestSpec.KIND_QUALITY -> QualityTestRunner(this).run(profiles)
+            TestSpec.KIND_QUALITY -> qualityRunner.run(profiles)
         }
     }
 
@@ -297,15 +299,21 @@ internal class TestSession(
         }
     }
 
-    fun reportQuality(profile: ProxyEntity, score: Int) {
+    fun reportQuality(profile: ProxyEntity, report: QualityReport) {
         val saved = try {
-            SagerDatabase.proxyDao.updateQualityScore(profile.id, profile.outboundJson, score) > 0
+            SagerDatabase.proxyDao.updateQualityScore(profile.id, profile.outboundJson, report.score ?: -1, report.details, report.gatewayWarning) > 0
         } catch (e: SQLException) {
             Logs.w(e)
             false
         }
-        counted(saved, false)
-        notifyClient { it.onServiceResult(profile.id, if (saved) "" else ERROR_ABORTED) }
+        val error = when {
+            !saved -> ERROR_ABORTED
+            report.score == null -> "Неполный замер"
+            report.score == 0 -> "Узел недоступен"
+            else -> ""
+        }
+        counted(error.isEmpty(), saved && error.isNotEmpty())
+        notifyClient { it.onServiceResult(profile.id, error) }
     }
 
     /** applyServiceResult (TestRunner.cpp:232-242): an aborted check stores nothing and keeps the previous one. */

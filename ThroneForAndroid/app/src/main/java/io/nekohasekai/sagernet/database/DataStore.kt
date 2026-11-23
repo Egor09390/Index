@@ -248,6 +248,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var quicDisablePathMtuDiscovery by SettingsRegistry.QUIC_DISABLE_PATH_MTU_DISCOVERY
 
     // testing
+    var qualityGatewayUrl by SettingsRegistry.QUALITY_GATEWAY_URL
     var testUrl by SettingsRegistry.TEST_URL
     var urlTestTimeoutMs by SettingsRegistry.URL_TEST_TIMEOUT_MS
     var testConcurrent by SettingsRegistry.TEST_CONCURRENT

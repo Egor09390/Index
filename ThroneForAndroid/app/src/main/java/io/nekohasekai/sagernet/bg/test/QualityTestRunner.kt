@@ -14,14 +14,17 @@ import io.nekohasekai.sagernet.outbound.json.JsonArray
 import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
 import io.throneproj.mobile.Mobile
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
+import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.ktx.app
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
+import okhttp3.Connection
+import okhttp3.Call
+import java.io.InterruptedIOException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -30,39 +33,52 @@ import java.util.concurrent.TimeUnit
 
 /** Measures only one saved profile at a time. The probe box's authenticated loopback inlet has an explicit exit. */
 internal class QualityTestRunner(private val session: TestSession) {
+    @Volatile private var activeCall: Call? = null
+
+    fun cancel() { activeCall?.cancel() }
+
     suspend fun run(profiles: List<ProxyEntity>) {
         for (profile in profiles) {
             if (session.cancelled) break
-            val score = try {
-                measure(profile)
+            delay((nextProfileAt - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+            if (session.cancelled) break
+            val network = SagerNet.underlyingNetwork
+            val environment = QualityEnvironment.describe(app)
+            val report = try {
+                val measured = measure(profile)
+                if (network != SagerNet.underlyingNetwork) QualityReport(null, "Во время замера сменилась сеть")
+                else measured
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Logs.w(e)
-                // The profile could not produce a usable test connection.
-                1
+                QualityReport(null, "Не удалось запустить проверку профиля")
+            } finally {
+                // TestEngine holds its process-wide session mutex, including across successive sweeps.
+                nextProfileAt = SystemClock.elapsedRealtime() + 250
             }
-            if (!session.cancelled) session.reportQuality(profile, score)
+            if (!session.cancelled) session.reportQuality(profile, report.copy(details = report.details + "\n" + environment))
         }
     }
 
-    private suspend fun measure(profile: ProxyEntity): Int {
+    private suspend fun measure(profile: ProxyEntity): QualityReport {
         val ports = PortLease()
         try {
             val generated = CoreConfigs.buildTest(listOf(profile.id), ports)
-            if (!generated.ok || generated.skipped.containsKey(profile.id)) return 1
+            if (!generated.ok || generated.skipped.containsKey(profile.id)) return QualityReport(null, "Профиль не подготовлен к замеру")
             session.ensureSharedXrayAssets(generated.xrayConfig)
             for (config in generated.xrayFullConfigs) session.ensureSharedXrayAssets(config)
-            if (session.cancelled) return 1
+            if (session.cancelled) return QualityReport(null, "Профиль не подготовлен к замеру")
 
             val fullConfig = generated.fullConfigs[profile.id]
             val core = if (fullConfig == null) CoreConfig.from(generated) else CoreConfig(fullConfig)
             val config = JsonInput.parseObject(core.coreConfig)
             val route = config["route"] as? JsonObject ?: JsonObject().also { config["route"] = it }
-            val exit = generated.outboundTags.singleOrNull() ?: defaultExit(config, route) ?: return 1
+            route["auto_detect_interface"] = true
+            val exit = generated.outboundTags.singleOrNull() ?: defaultExit(config, route) ?: return QualityReport(null, "Профиль не подготовлен к замеру")
 
             val port = ports.reserve(1).single()
-            if (port == 0) return 1
+            if (port == 0) return QualityReport(null, "Профиль не подготовлен к замеру")
             val password = UUID.randomUUID().toString()
             val inbounds = config.array("inbounds")
             inbounds.add(
@@ -76,10 +92,11 @@ internal class QualityTestRunner(private val session: TestSession) {
             for (rule in route.array("rules")) rules.add(rule)
             route["rules"] = rules
 
+            val start = SystemClock.elapsedRealtimeNanos()
             val instance = Mobile.newInstance(CoreRuntime.platform, core.copy(coreConfig = config.toCompact()).toStartOptions())
             try {
                 instance.start()
-                return probe(port, password)
+                return probe(port, password, start)
             } finally {
                 runCatching { instance.close() }.onFailure { Logs.w(it) }
             }
@@ -93,24 +110,57 @@ internal class QualityTestRunner(private val session: TestSession) {
             ?: (config.array("outbounds").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
             ?: (config.array("endpoints").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 
-    private suspend fun probe(port: Int, password: String): Int {
+    private suspend fun probe(port: Int, password: String, start: Long): QualityReport {
         val credential = Credentials.basic(PROBE_USER, password)
+        var connection: Connection? = null
         val client = OkHttpClient.Builder()
             .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port)))
             .proxyAuthenticator { _, response ->
                 if (response.request.header("Proxy-Authorization") != null) null
                 else response.request.newBuilder().header("Proxy-Authorization", credential).build()
             }
+            .addNetworkInterceptor { chain ->
+                connection = chain.connection()
+                chain.proceed(chain.request())
+            }
             .retryOnConnectionFailure(false)
             .followRedirects(false)
-            .callTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .build()
+        val deadline = start + 3_500 * NS_PER_MS
+        val baseline = Request.Builder().url(BASELINE).header("Cache-Control", "no-cache").build()
+        var previous: Connection? = null
+
+        fun baselineProbe(startTime: Long, timeout: Long): QualityProbe {
+            return try {
+                call(client, baseline, deadline, timeout) { response ->
+                    val ms = (SystemClock.elapsedRealtimeNanos() - startTime) / 1e6
+                    val reused = previous != null && previous === connection
+                    previous = connection
+                    if (response.code == 204) QualityProbe(ms, reused)
+                    else QualityProbe(incomplete = true, reason = "HTTP ${response.code}")
+                }
+            } catch (_: BudgetExpired) {
+                QualityProbe(incomplete = true, reason = "лимит времени")
+            } catch (_: InterruptedIOException) {
+                QualityProbe(timeout = true, reason = "таймаут")
+            } catch (_: IOException) {
+                QualityProbe(reason = "сбой")
+            }
+        }
+
         try {
-            val https = HTTPS_SITES.map { url -> List(3) { if (session.cancelled) null else httpsTime(client, url) } }
-            val ws = !session.cancelled && webSocketEcho(client)
-            val sse = !session.cancelled && eventStream(client)
-            return ConnectionQuality.score(https, listOf(ws, sse))
+            val coldBudget = 2000L - (SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS
+            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget)
+                else QualityProbe(incomplete = true, reason = "долгий старт ядра")
+            val burst = mutableListOf<QualityProbe>()
+            repeat(5) { index ->
+                if (index > 0) delay(((deadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
+                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500)
+            }
+            val stream = streamProbe(client, deadline)
+            val gateway = gatewayProbe(client, deadline)
+            val report = ConnectionQuality.evaluate(cold, burst, stream, gateway)
+            return report.copy(details = report.details + "\nЗамер · ${(SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS} мс")
         } finally {
             client.dispatcher.cancelAll()
             client.connectionPool.evictAll()
@@ -118,70 +168,85 @@ internal class QualityTestRunner(private val session: TestSession) {
         }
     }
 
-    private fun httpsTime(client: OkHttpClient, url: String): Long? = try {
-        val start = SystemClock.elapsedRealtime()
-        client.newCall(Request.Builder().url(url).header("Cache-Control", "no-cache").build()).execute().use {
-            if (it.code == 204) SystemClock.elapsedRealtime() - start else null
-        }
-    } catch (_: IOException) {
-        null
-    }
+    private class BudgetExpired : IOException()
 
-    private suspend fun webSocketEcho(client: OkHttpClient): Boolean {
-        val answer = CompletableDeferred<Boolean>()
-        val challenge = UUID.randomUUID().toString()
-        val socket = client.newWebSocket(Request.Builder().url("wss://echo.websocket.org").build(), object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (!webSocket.send(challenge)) answer.complete(false)
+    private fun <T> call(client: OkHttpClient, request: Request, deadline: Long, timeoutMs: Long, read: (Response) -> T): T {
+        val remaining = deadline - SystemClock.elapsedRealtimeNanos()
+        if (remaining <= 0) throw BudgetExpired()
+        val limit = minOf(remaining, timeoutMs * NS_PER_MS)
+        val call = client.newCall(request)
+        call.timeout().timeout(limit, TimeUnit.NANOSECONDS)
+        activeCall = call
+        try {
+            if (session.cancelled) throw CancellationException()
+            return call.execute().use(read)
+        } catch (e: IOException) {
+            if (session.cancelled) throw CancellationException()
+            if (limit == remaining && (SystemClock.elapsedRealtimeNanos() >= deadline || e is InterruptedIOException)) {
+                throw BudgetExpired()
             }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                if (text == challenge) answer.complete(true)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                answer.complete(false)
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                answer.complete(false)
-            }
-        })
-        return try {
-            withTimeoutOrNull(TIMEOUT_MS) { answer.await() } == true
+            throw e
         } finally {
-            socket.cancel()
+            activeCall = null
         }
     }
 
-    private fun eventStream(client: OkHttpClient): Boolean {
+    private fun streamProbe(client: OkHttpClient, deadline: Long): StreamProbe {
+        val request = Request.Builder().url(STREAM).header("Accept-Encoding", "identity").build()
+        var received = 0
+        var reached = false
         return try {
-            val request = Request.Builder().url("https://echo.websocket.org/.sse")
-                .header("Accept", "text/event-stream").build()
-            client.newCall(request).execute().use { response ->
-                val body = response.body ?: return false
-                if (!response.isSuccessful || !response.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
-                    return false
+            call(client, request, deadline, 1500) { response ->
+                reached = true
+                val body = response.body
+                if (response.code != 200 || body == null) return@call StreamProbe("HTTP ${response.code}", null, true)
+                if (response.header("Content-Type").orEmpty().startsWith("text/html")) {
+                    return@call StreamProbe("вместо блока получена HTML-страница", null, true)
                 }
-                val source = body.source()
-                var hasData = false
-                repeat(24) {
-                    val line = source.readUtf8LineStrict(4096)
-                    if (line.isEmpty() && hasData) return true
-                    if (line.startsWith("data:") && line.substringAfter(':').isNotBlank()) hasData = true
+                val buffer = ByteArray(8192)
+                val input = body.byteStream()
+                var previous = SystemClock.elapsedRealtimeNanos()
+                var maxGap = 0L
+                while (received < STREAM_BYTES) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, STREAM_BYTES - received))
+                    if (count < 0) return@call StreamProbe("обрыв · $received Б", 15, true)
+                    val now = SystemClock.elapsedRealtimeNanos()
+                    maxGap = maxOf(maxGap, now - previous)
+                    previous = now
+                    received += count
                 }
-                false
+                StreamProbe.complete(maxGap / 1e6)
             }
+        } catch (_: BudgetExpired) {
+            StreamProbe("лимит времени · $received Б", null, reached)
         } catch (_: IOException) {
-            false
+            StreamProbe("сбой потока · $received Б", 15, reached)
+        }
+    }
+
+    private fun gatewayProbe(client: OkHttpClient, deadline: Long): GatewayProbe {
+        val request = Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
+        return try {
+            call(client, request, deadline, 1000) {
+                GatewayProbe("HTTP ${it.code}", it.code == 403 || it.code == 503, true)
+            }
+        } catch (_: BudgetExpired) {
+            GatewayProbe("не измерен · лимит времени")
+        } catch (_: InterruptedIOException) {
+            GatewayProbe("таймаут", restricted = true)
+        } catch (_: IOException) {
+            GatewayProbe("ошибка соединения")
         }
     }
 
     private companion object {
-        const val TIMEOUT_MS = 5_000L
+        var nextProfileAt = 0L
+        const val NS_PER_MS = 1_000_000L
         const val LOOPBACK = "127.0.0.1"
         const val PROBE_USER = "quality"
         const val PROBE_INBOUND = "throne-quality-probe"
-        val HTTPS_SITES = listOf("https://cp.cloudflare.com/generate_204", "https://www.gstatic.com/generate_204")
+        const val BASELINE = "https://cp.cloudflare.com/generate_204"
+        const val STREAM_BYTES = 65536
+        const val STREAM = "https://speed.cloudflare.com/__down?bytes=65536"
     }
 }

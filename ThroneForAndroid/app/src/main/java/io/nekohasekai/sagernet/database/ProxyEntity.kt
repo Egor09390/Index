@@ -67,6 +67,8 @@ data class ProxyEntity(
     /** The desktop's `service_checks`: the results of the per-service reachability checks. */
     @ColumnInfo(name = "service_checks", defaultValue = "") var serviceChecks: String = "",
     @ColumnInfo(name = "quality_score", defaultValue = "0") var qualityScore: Int = 0,
+    @ColumnInfo(name = "quality_detail", defaultValue = "") var qualityDetail: String = "",
+    @ColumnInfo(name = "quality_gateway_warning", defaultValue = "0") var qualityGatewayWarning: Boolean = false,
 ) : Parcelable {
 
     @IgnoredOnParcel
@@ -347,7 +349,7 @@ data class ProxyEntity(
         @Query(
             "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
                 "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
-                "NULL AS `test_error`, '' AS `service_checks`, `quality_score` FROM `profiles` WHERE `gid` = :groupId"
+                "NULL AS `test_error`, '' AS `service_checks`, `quality_score`, `quality_detail`, `quality_gateway_warning` FROM `profiles` WHERE `gid` = :groupId"
         )
         fun getWithoutDataByGroup(groupId: Long): List<ProxyEntity>
 
@@ -355,7 +357,7 @@ data class ProxyEntity(
         @Query(
             "SELECT `id`, '' AS `type`, NULL AS `name`, `gid`, `user_order`, `latency`, `latency_at`, `dl_speed`, " +
                 "`ul_speed`, NULL AS `test_country`, `ip_out`, '' AS `outbound_json`, `traffic_dl`, `traffic_up`, " +
-                "NULL AS `test_error`, '' AS `service_checks`, `quality_score` FROM `profiles` WHERE `id` IN (:proxyIds)"
+                "NULL AS `test_error`, '' AS `service_checks`, `quality_score`, `quality_detail`, `quality_gateway_warning` FROM `profiles` WHERE `id` IN (:proxyIds)"
         )
         fun getWithoutData(proxyIds: List<Long>): List<ProxyEntity>
 
@@ -395,7 +397,7 @@ data class ProxyEntity(
         fun setGroup(proxyId: Long, groupId: Long, order: Long)
 
         /** New data for a profile in place (subscription update, resolved address): test results and traffic stay. */
-        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson, `quality_score` = CASE WHEN `outbound_json` = :outboundJson THEN `quality_score` ELSE 0 END WHERE `id` = :proxyId")
+        @Query("UPDATE `profiles` SET `type` = :type, `name` = :name, `outbound_json` = :outboundJson, `quality_score` = CASE WHEN `outbound_json` = :outboundJson THEN `quality_score` ELSE 0 END, quality_detail = CASE WHEN outbound_json = :outboundJson THEN quality_detail ELSE '' END, quality_gateway_warning = CASE WHEN outbound_json = :outboundJson THEN quality_gateway_warning ELSE 0 END WHERE `id` = :proxyId")
         fun updateOutbound(proxyId: Long, type: String, name: String?, outboundJson: String): Int
 
         @Query("UPDATE `profiles` SET `traffic_dl` = :rx, `traffic_up` = :tx WHERE `id` = :proxyId")
@@ -430,8 +432,8 @@ data class ProxyEntity(
         )
         fun updateLatency(proxyId: Long, latency: Int, latencyAt: Long, testError: String?): Int
 
-        @Query("UPDATE `profiles` SET `quality_score` = :score WHERE `id` = :id AND `outbound_json` = :outboundJson")
-        fun updateQualityScore(id: Long, outboundJson: String, score: Int): Int
+        @Query("UPDATE `profiles` SET `quality_score` = :score, quality_detail = :details, quality_gateway_warning = :warning WHERE `id` = :id AND `outbound_json` = :outboundJson")
+        fun updateQualityScore(id: Long, outboundJson: String, score: Int, details: String, warning: Boolean): Int
 
         /** TestRunner::applyServiceResult: the `service_checks` document alone. */
         @Query("UPDATE `profiles` SET `service_checks` = :document WHERE `id` = :proxyId")
@@ -439,7 +441,7 @@ data class ProxyEntity(
 
         @Query(
             "UPDATE `profiles` SET `latency` = 0, `latency_at` = 0, `dl_speed` = NULL, `ul_speed` = NULL, " +
-                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0 " +
+                "`test_country` = NULL, `ip_out` = NULL, `test_error` = NULL, `service_checks` = '', `quality_score` = 0, quality_detail = '', quality_gateway_warning = 0 " +
                 "WHERE `id` IN (:profileIds)"
         )
         fun clearTestResults(profileIds: List<Long>): Int

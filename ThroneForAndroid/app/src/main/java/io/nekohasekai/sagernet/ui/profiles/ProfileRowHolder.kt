@@ -278,6 +278,13 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
             val text = boundProfile?.testError
             if (!text.isNullOrBlank()) it.context.alert(text).tryToShow()
         }
+        qualityScore.setOnClickListener { view ->
+            boundProfile?.let { row ->
+                view.context.alert(row.qualityDetail.ifEmpty {
+                    "Оценка сохранена предыдущей версией. Запустите новый замер для разбивки."
+                }).tryToShow()
+            }
+        }
         result.setOnClickListener(showError)
         error.setOnClickListener(showError)
         result.isFocusable = false
@@ -305,9 +312,11 @@ internal class ProfileRowHolder(view: View, private val adapter: ProfileListAdap
         result.contentDescription = content.resultDescription
         result.alpha = if (content.resultDimmed) 0.5f else 1f
         result.isVisible = content.result.isNotEmpty()
-        qualityScore.isVisible = profile.qualityScore in 1..100
+        qualityScore.isVisible = profile.qualityDetail.isNotEmpty() || profile.qualityScore in 1..100
         qualityScore.text = if (qualityScore.isVisible) {
-            itemView.context.getString(R.string.connection_quality_score, profile.qualityScore)
+            val score = if (profile.qualityScore < 0) "—/100"
+                else itemView.context.getString(R.string.connection_quality_score, profile.qualityScore)
+            if (profile.qualityGatewayWarning) "$score ⚠" else score
         } else ""
         testProgress.isVisible = content.testing
         traffic.text = content.traffic

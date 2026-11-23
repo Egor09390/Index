@@ -726,10 +726,21 @@ class TestPanelController(
 
     // ------------------------------------------------------------------------------------------------ texts
 
+    private var environmentAt = Long.MIN_VALUE
+    private var qualityEnvironment = ""
+    private fun environment(s: TestUiState): String {
+        if (environmentAt != s.startedAt) {
+            qualityEnvironment = io.nekohasekai.sagernet.bg.test.QualityEnvironment.describe(context)
+            environmentAt = s.startedAt
+        }
+        return qualityEnvironment
+    }
+
     private fun progressText(s: TestUiState): String {
         val elapsed = System.currentTimeMillis() - s.startedAt
         val text = StringBuilder(context.getString(R.string.test_panel_progress, s.done, s.total))
         text.append(SEP).append(TestFormat.clock(elapsed))
+        if (s.kind == TestSpec.KIND_QUALITY) text.append(SEP).append(environment(s))
         if (s.stopping) {
             text.append(SEP).append(context.getString(R.string.test_panel_stopping))
         } else if (s.done > 0 && s.pending > 0 && elapsed >= MIN_ETA_ELAPSED_MS) {
@@ -748,7 +759,7 @@ class TestPanelController(
         } else {
             context.getString(R.string.test_panel_summary_tested, tested, elapsed)
         }
-        if (s.kind == TestSpec.KIND_QUALITY) return head
+        if (s.kind == TestSpec.KIND_QUALITY) return head + SEP + environment(s)
         val tail = when {
             s.kind == TestSpec.KIND_IP -> if (s.ok > 0) {
                 context.getString(R.string.test_panel_summary_resolved, s.ok, s.countries.size)

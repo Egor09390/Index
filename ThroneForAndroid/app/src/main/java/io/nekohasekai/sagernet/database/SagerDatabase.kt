@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
         ProxyGroup::class, ProxyEntity::class, RouteProfileEntity::class, RouteRuleEntity::class,
         SettingEntry::class, MarkerEntity::class,
     ],
-    version = 21,
+    version = 22,
     autoMigrations = [
         AutoMigration(from = 8, to = 9),
         AutoMigration(from = 12, to = 13),
@@ -201,7 +201,7 @@ abstract class SagerDatabase : RoomDatabase() {
         private fun buildProfileDatabase(): SagerDatabase =
             Room.databaseBuilder(SagerNet.application, SagerDatabase::class.java, Key.DB_PROFILE)
                 .addMigrations(
-                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
+                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                 )
                 .addCallback(callback)
                 // both processes use the file: WAL lets readers in either one run while the other writes
@@ -214,6 +214,13 @@ abstract class SagerDatabase : RoomDatabase() {
                 .build()
 
         // Failures are logged with android.util.Log: Logs reads the log level from the settings in this database.
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE profiles ADD COLUMN quality_detail TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN quality_gateway_warning INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         val MIGRATION_20_21: Migration = object : Migration(20, 21) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `profiles` ADD COLUMN `quality_score` INTEGER NOT NULL DEFAULT 0")

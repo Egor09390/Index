@@ -38,6 +38,10 @@ class TestingSettingsFragment : SettingsScreenFragment(R.xml.settings_testing) {
     override fun bind() {
         bindUrlTest()
         gateText(
+            SettingsRegistry.QUALITY_GATEWAY_URL.key, Validation.Rules.url(listOf("https"), Empty.Required),
+            reload = false, invalid = R.string.speed_test_url_invalid,
+        ) { it.startsWith("https://", ignoreCase = true) && SpeedTestSettings.isValidHttpUrl(it) }
+        gateText(
             SettingsRegistry.DIRECT_TEST_URL.key, Validation.Rules.url(SettingChecks.HTTP), reload = false,
             invalid = R.string.speed_test_url_invalid,
         ) { it.isEmpty() || SpeedTestSettings.isValidHttpUrl(it) }
