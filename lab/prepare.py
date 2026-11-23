@@ -15,13 +15,14 @@ main='''
 fun main() = kotlinx.coroutines.runBlocking {
     for ((name, port) in listOf("TUIC v5" to 23011, "Hysteria2 Brutal" to 23012,
         "Naive H2" to 23013, "Naive H3" to 23014)) {
-        for (scenario in listOf("clean", "stall", "truncated", "budget")) {
+        val scenarios = if (System.getenv("QUALITY_MATRIX") == "mobile") listOf("mobile") else listOf("clean", "stall", "truncated", "budget")
+        for (scenario in scenarios) {
             java.io.File("scenario").writeText(scenario)
             val report = QualityTestRunner(Session()).probe(port, "lab") { /* native pair is already listening */ }
             println("$name $scenario -> ${report.score}, warning=${report.gatewayWarning}")
             println(report.details)
             when (scenario) {
-                "clean" -> check(report.score != null && report.gatewayWarning)
+                "mobile", "clean" -> check(report.score != null && report.gatewayWarning)
                 "stall", "truncated" -> check(report.score != null && !report.gatewayWarning)
                 "budget" -> check(report.score == null && !report.gatewayWarning)
             }

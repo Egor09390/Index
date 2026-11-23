@@ -83,9 +83,26 @@ with ExitStack() as cleanup:
         if p.poll() is not None:
             raise RuntimeError(Path(label+'.log').read_text()[-2500:])
     cp='compiled:deps/*:kotlinc/lib/kotlinx-coroutines-core-jvm.jar:kotlinc/lib/kotlin-stdlib.jar'
-    done=subprocess.run(['java','-Djavax.net.ssl.trustStore=lab.trust','-Djavax.net.ssl.trustStorePassword=changeit','-cp',cp,'io.nekohasekai.sagernet.bg.test.NetworkLabKt'],stdout=open('lab-results.txt','w'),stderr=subprocess.STDOUT)
-    print('\n'.join(s for s in Path('lab-results.txt').read_text().splitlines() if ' -> ' in s))
-    if done.returncode:
-        print(Path('lab-results.txt').read_text()[-1600:])
-        print(Path('client.log').read_text()[-1200:])
-    sys.exit(done.returncode)
+    def run_matrix(mode):
+        env = dict(os.environ, QUALITY_MATRIX=mode)
+        done = subprocess.run(['java','-Djavax.net.ssl.trustStore=lab.trust','-Djavax.net.ssl.trustStorePassword=changeit','-cp',cp,'io.nekohasekai.sagernet.bg.test.NetworkLabKt'], env=env, stdout=open('lab-results.txt','w'), stderr=subprocess.STDOUT)
+        data = Path('lab-results.txt').read_text()
+        print('\n'.join(s for s in data.splitlines() if ' -> ' in s), flush=True)
+        if done.returncode:
+            print(data[-1600:])
+            print(Path('client.log').read_text()[-1200:])
+        return done.returncode
+    if run_matrix('normal'):
+        sys.exit(1)
+    # Impair only packets on the test proxies' outer transport, leaving the local HTTP inlet alone.
+    def tc(*args):
+        subprocess.run(['sudo','tc',*args],check=True)
+    tc('qdisc','add','dev','lo','root','handle','1:','prio')
+    cleanup.callback(subprocess.run,['sudo','tc','qdisc','del','dev','lo','root'])
+    tc('qdisc','add','dev','lo','parent','1:3','handle','30:','netem','delay','30ms','5ms','rate','6mbit')
+    for address_family, transport, port in [('ip','udp',23021),('ip','udp',23022),('ip','tcp',23023),('ipv6','udp',23024)]:
+        for field in ['src_port','dst_port']:
+            tc('filter','add','dev','lo','protocol',address_family,'parent','1:','prio',str(port-23000),'flower','ip_proto',transport,field,str(port),'classid','1:3')
+    status = run_matrix('mobile')
+    tc('-s','qdisc','show','dev','lo')
+    sys.exit(status)

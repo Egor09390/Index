@@ -52,7 +52,8 @@ class NativeInterface : PlatformInterface {
     // Test boxes run in this process while no VPN service exists; their sockets then take the plain
     // dial path, which is what those tests want, so a missing service is not an error.
     override fun autoDetectInterfaceControl(fd: Int) {
-        DataStore.vpnService?.protect(fd)
+        val vpn = DataStore.vpnService ?: return
+        if (!vpn.protect(fd)) throw java.io.IOException("VpnService could not protect the outbound socket")
     }
 
     override fun openTun(options: TunOptions): Int {

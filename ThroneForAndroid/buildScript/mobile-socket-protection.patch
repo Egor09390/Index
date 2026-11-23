@@ -1,0 +1,31 @@
+diff --git a/core/mobile/instance.go b/core/mobile/instance.go
+index e106989..4936070 100644
+--- a/core/mobile/instance.go
++++ b/core/mobile/instance.go
+@@ -256,7 +256,6 @@ func (i *Instance) Close() error {
+ 	err := closeBoxWithTimeout(i.cancel, i.handle.Box, boxCloseTimeout, true)
+ 	i.urlTestHistory.Close()
+ 	i.xray.close()
+-	releaseProtector(i.platform)
+ 	return err
+ }
+ 
+diff --git a/core/mobile/xray.go b/core/mobile/xray.go
+index f89443a..04c9959 100644
+--- a/core/mobile/xray.go
++++ b/core/mobile/xray.go
+@@ -68,12 +68,8 @@ func installProtector(platform PlatformInterface) {
+ 	})
+ }
+ 
+-func releaseProtector(platform PlatformInterface) {
+-	if state := protector.Load(); state != nil && state.platform == platform {
+-		protector.CompareAndSwap(state, nil)
+-	}
+-}
+-
++// Android supplies one application-scoped platform per process. Its protect callback reads
++// the current VpnService on each dial. A temporary box must not unregister it on close.
+ func protectDial(_, _ string, conn syscall.RawConn) error {
+ 	state := protector.Load()
+ 	if state == nil || !state.enabled {

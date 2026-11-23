@@ -18,6 +18,7 @@ runs:
         git -C "$THRONE_DIR" remote add origin https://github.com/throneproj/Throne
         git -C "$THRONE_DIR" fetch -q --depth 1 origin "$REF"
         git -C "$THRONE_DIR" checkout -q --detach FETCH_HEAD
+        git -C "$THRONE_DIR" apply "$GITHUB_WORKSPACE/buildScript/mobile-socket-protection.patch"
         {
           echo "THRONE_CORE_REF=$REF"
           echo "THRONE_DIR=$THRONE_DIR"
@@ -31,7 +32,7 @@ runs:
         path: |
           app/libs/ThroneCore.aar
           app/src/main/assets/schema/sing-box.json
-        key: throne-core-${{ env.THRONE_CORE_REF }}-${{ env.THRONE_CORE_SHA }}-${{ env.THRONE_CORE_SCRIPT_SHA }}-${{ hashFiles('.github/actions/throne-core/action.yml') }}
+        key: throne-core-${{ env.THRONE_CORE_REF }}-${{ env.THRONE_CORE_SHA }}-${{ env.THRONE_CORE_SCRIPT_SHA }}-${{ hashFiles('.github/actions/throne-core/action.yml', 'buildScript/mobile-socket-protection.patch') }}
     - name: Install Golang
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/setup-go@v7
