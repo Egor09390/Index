@@ -155,13 +155,16 @@ data class ProxyEntity(
     }
 
     fun hasTestResults(): Boolean = latency != 0 || testCountry != null || ipOut != null || dlSpeed != null ||
-        ulSpeed != null || testError != null || serviceChecks.isNotEmpty()
+        ulSpeed != null || testError != null || serviceChecks.isNotEmpty() || qualityScore != 0 || qualityDetail.isNotEmpty()
 
     /** Profile::ClearTestResults, plus the Android-only error text. */
     fun clearTestResults() {
         testCountry = null
         ipOut = null
         serviceChecks = ""
+        qualityScore = 0
+        qualityDetail = ""
+        qualityGatewayWarning = false
         latency = 0
         latencyAt = 0L
         dlSpeed = null

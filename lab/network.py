@@ -55,6 +55,9 @@ for i,t in enumerate(['tuic','hysteria2','naive','naive']):
     else:
         base.update(users=[user],network='tcp' if i==2 else 'udp')
         conf.update(username='test',quic=i==3)
+        if i==3:
+            base['listen']='::1'
+            conf['server']='::1'
     servers.append(base)
     clients.append({'type':'http','tag':'in'+tag,'listen':'127.0.0.1','listen_port':23011+i,'users':[{'username':'quality','password':pw}]})
     rules.append({'inbound':'in'+tag,'action':'route','outbound':tag})

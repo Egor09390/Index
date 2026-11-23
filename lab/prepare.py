@@ -17,7 +17,7 @@ fun main() = kotlinx.coroutines.runBlocking {
         "Naive H2" to 23013, "Naive H3" to 23014)) {
         for (scenario in listOf("clean", "stall", "truncated", "budget")) {
             java.io.File("scenario").writeText(scenario)
-            val report = QualityTestRunner(Session()).probe(port, "lab", System.nanoTime())
+            val report = QualityTestRunner(Session()).probe(port, "lab") { /* native pair is already listening */ }
             println("$name $scenario -> ${report.score}, warning=${report.gatewayWarning}")
             println(report.details)
             when (scenario) {
