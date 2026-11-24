@@ -1,0 +1,73 @@
+name: Publish signed Ultra quality.22 APK
+on:
+  push:
+    branches: [throne-quality-22-download]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: throne-connection-quality-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify and publish the signed ARM64 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          THRONE_TAG: v2.0.7-quality.22
+          THRONE_RUN: '45316190315'
+          THRONE_COMMIT: e8c3f46a49350647b38e144c75745f0d9969e729
+          THRONE_APK: Ultra-2.0.7-quality.22-arm64-v8a.apk
+          THRONE_UNSIGNED_SHA: bca109cd3d31ac20111124fae3644fc11ff72e6bb74eafeb46d8f1fafa2974ce
+          THRONE_SIGNED_SHA: f70a8145d98f0d8496d596fe1c11f7e8d50a75a95565416cebd587a2dfec9b25
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/runs/$THRONE_RUN" | jq -e --arg commit "$THRONE_COMMIT" '
+            .head_sha == $commit and .conclusion == "success"
+          ' >/dev/null
+
+          cd "$RUNNER_TEMP"
+          gh run download "$THRONE_RUN" --name throne-arm64-for-signing --dir throne-input
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import zlib
+
+          source_path, = Path("throne-input").rglob("*arm64-v8a*unsigned.apk")
+          source = source_path.read_bytes()
+          if hashlib.sha256(source).hexdigest() != os.environ["THRONE_UNSIGNED_SHA"]:
+              raise SystemExit("Unexpected unsigned APK checksum")
+          delta = Path(os.environ["GITHUB_WORKSPACE"], "throne-apk-delivery/quality-22.b64").read_bytes()
+          signed = bytearray()
+          for entry in json.loads(zlib.decompress(base64.b64decode(delta))):
+              if isinstance(entry, str):
+                  signed.extend(base64.b64decode(entry))
+              else:
+                  offset, size = entry
+                  signed.extend(source[offset:offset + size])
+          digest = hashlib.sha256(signed).hexdigest()
+          if digest != os.environ["THRONE_SIGNED_SHA"]:
+              raise SystemExit("Unexpected signed APK checksum")
+          apk = os.environ["THRONE_APK"]
+          Path(apk).write_bytes(signed)
+          Path("SHA256SUMS").write_text(f"{digest}  {apk}\n")
+          PY
+
+          bash "$GITHUB_WORKSPACE/ThroneForAndroid/buildScript/release_notes.sh" "${THRONE_TAG#v}" > release.md
+          printf '\nThe ARM64 APK uses the same application ID and signing certificate as the signed quality.21 APK.\n' >> release.md
+          gh release create "$THRONE_TAG" "$THRONE_APK" SHA256SUMS --target "$THRONE_COMMIT" \
+            --latest --title "Ultra $THRONE_TAG" --notes-file release.md
+          gh api "repos/$GH_REPO/releases/latest" | jq -e --arg tag "$THRONE_TAG" --arg commit "$THRONE_COMMIT" \
+            --arg apk "$THRONE_APK" --arg sha "sha256:$THRONE_SIGNED_SHA" '
+            .tag_name == $tag and .target_commitish == $commit and .prerelease == false and .draft == false and
+            any(.assets[]; .name == $apk and .state == "uploaded" and .digest == $sha)
+          ' >/dev/null
