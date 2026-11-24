@@ -1,3 +1,7 @@
+#### 2.0.7-quality.22
+
+* Measure first visit, new-tab navigation, idle jitter and latency under three parallel 64 KiB transfers. Tap the score for the measured values and the separate gateway status.
+
 #### 2.0.7-quality.21
 
 * Measure cold start, five keep-alive requests, a 64 KiB transfer and the configured HTTPS gateway. Tap a profile score for the measurements.

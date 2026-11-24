@@ -2,81 +2,109 @@ package io.nekohasekai.sagernet.bg.test
 
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-/** A miss is an attempted application probe. A deadline or an invalid baseline yields no comparable result. */
-internal data class QualityProbe(
-    val millis: Double? = null,
-    val reused: Boolean = false,
-    val timeout: Boolean = false,
-    val incomplete: Boolean = false,
-    val reason: String = "",
-)
+internal enum class ProbeState { OK, LOST, SKIPPED }
 
-internal data class StreamProbe(val description: String, val penalty: Int?, val reached: Boolean = false) {
+internal data class QualityTiming(
+    val state: ProbeState,
+    val millis: Double? = null,
+) {
     companion object {
-        fun complete(maxGapMs: Double): StreamProbe {
-            val penalty = ceil((maxGapMs - 500.0).coerceAtLeast(0.0) / 60.0).toInt().coerceAtMost(15)
-            return StreamProbe("64 КиБ · пауза до ${maxGapMs.roundToInt()} мс", penalty, true)
-        }
+        val lost = QualityTiming(ProbeState.LOST)
+        val skipped = QualityTiming(ProbeState.SKIPPED)
+        fun ok(millis: Double?) = QualityTiming(ProbeState.OK, millis)
     }
 }
 
-internal data class GatewayProbe(val description: String, val restricted: Boolean = false, val reached: Boolean = false)
+internal data class DownloadProbe(val state: ProbeState, val bytes: Int, val stalled: Boolean)
+internal data class GatewayProbe(val status: String, val restricted: Boolean = false)
 internal data class QualityReport(val score: Int?, val details: String, val gatewayWarning: Boolean = false)
 
 internal object ConnectionQuality {
-    private fun number(n: Double?) = n?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "—"
+    const val IDLE_REQUESTS = 6
+    const val DOWNLOADS = 3
+    const val STREAM_BYTES = 64 * 1024
+    private const val CONTROL_REQUESTS = IDLE_REQUESTS + 3
 
-    fun evaluate(cold: QualityProbe, burst: List<QualityProbe>, stream: StreamProbe, gateway: GatewayProbe): QualityReport {
-        require(burst.size == 5)
-        val probes = listOf(cold) + burst
-        val warm = burst.map { probe -> probe.millis.takeIf { probe.reused } }
-        val sorted = warm.filterNotNull().sorted()
+    fun evaluate(
+        cold: QualityTiming,
+        tab: QualityTiming,
+        idle: List<QualityTiming>,
+        loaded: QualityTiming,
+        downloads: List<DownloadProbe>,
+        gateway: GatewayProbe,
+    ): QualityReport {
+        require(idle.size == IDLE_REQUESTS && downloads.size == DOWNLOADS)
+        val controls = listOf(cold, tab, loaded) + idle
+        val losses = controls.count { it.state == ProbeState.LOST }
+        val failedDownloads = downloads.count { it.state == ProbeState.LOST }
+        val loss = losses + 2 * failedDownloads
+        val lossPoints = when (loss) {
+            0 -> 35
+            1 -> 15
+            2 -> 4
+            else -> 0
+        }
+
+        val successful = idle.mapNotNull { it.millis }
+        val sorted = successful.sorted()
+        val floor = sorted.firstOrNull()
         val median = if (sorted.isEmpty()) null else (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
-        val differences = warm.zipWithNext().mapNotNull { (a, b) -> if (a == null || b == null) null else abs(a - b) }
-        val jitter = differences.takeIf { it.isNotEmpty() }?.average()
-        val lost = probes.count { it.millis == null && !it.incomplete }
-        val lossPoints = when (lost) { 0 -> 35; 1 -> 20; 2 -> 8; else -> 0 }
-        val jitterPoints = when {
-            jitter == null || jitter >= 40 -> 0.0
-            jitter <= 4 -> 30.0
-            else -> 30 * (1 - ((jitter - 4) / 36).pow(0.85))
+        val idleBloat = if (median != null && floor != null) median - floor else null
+        val deltas = successful.zipWithNext { a, b -> abs(a - b) }.sorted()
+        val cleanDeltas = if (deltas.size >= 3) deltas.dropLast(1) else deltas
+        val jitter = cleanDeltas.takeIf { it.isNotEmpty() }?.average()
+        val loadRatio = median?.let { m -> loaded.millis?.div(m.coerceAtLeast(20.0)) }
+        val loadDelta = median?.let { m -> loaded.millis?.minus(m)?.coerceAtLeast(0.0) }
+        val base = floor?.coerceAtLeast(20.0)
+        val tabRatio = base?.let { tab.millis?.div(it) }
+        val coldRatio = base?.let { cold.millis?.div(it) }
+
+        val loadedPoints = when {
+            loadRatio == null || loadDelta == null -> 0.0
+            loadDelta <= 28.0 -> 18.0
+            else -> linear(loadRatio, 1.35, 3.6, 18.0)
         }
-        val latencyPoints = median?.let { 20 * ((350 - it) / 265).coerceIn(0.0, 1.0) } ?: 0.0
-        val ratio = median?.let { cold.millis?.div(it.coerceAtLeast(15.0)) }
-        val handshakePoints = when {
-            cold.millis == null -> 0.0
-            cold.millis <= 160 -> 15.0
-            ratio == null -> 0.0
-            else -> 15 * ((6 - ratio) / 4.2).coerceIn(0.0, 1.0)
-        }
-        val allTimedOut = probes.all { it.timeout } && !stream.reached && !gateway.reached
+        val rpmPoints = loadedPoints + linear(idleBloat, 4.5, 35.0, 7.0)
+        val jitterPoints = jitter?.let { 20.0 * (1.0 - ((it - 5.5) / 32.5).coerceIn(0.0, 1.0).pow(0.85)) } ?: 0.0
+        val tabPoints = if (floor != null && tab.millis != null && tab.millis - floor <= 35.0) 13.0
+            else linear(tabRatio, 1.35, 3.2, 13.0)
+        val coldPoints = if (cold.millis != null && cold.millis <= 180.0) 7.0
+            else linear(coldRatio, 2.4, 5.5, 7.0)
+        val navPoints = tabPoints + coldPoints
+        val routePenalty = floor?.let { ((it - 205.0) * 0.14).coerceIn(0.0, 25.0) } ?: 0.0
+        val stalled = downloads.any { it.stalled }
+        val stallPenalty = if (stalled) 25 else 0
         val score = when {
-            allTimedOut -> 0
-            probes.any { it.incomplete } || stream.penalty == null -> null
-            sorted.isEmpty() && lost < 6 -> null
-            else -> (lossPoints + jitterPoints + latencyPoints + handshakePoints - stream.penalty).roundToInt().coerceIn(1, 100)
+            losses == CONTROL_REQUESTS -> 0
+            controls.any { it.state == ProbeState.SKIPPED } || downloads.any { it.state == ProbeState.SKIPPED } -> null
+            else -> (lossPoints + rpmPoints + jitterPoints + navPoints - stallPenalty - routePenalty)
+                .roundToInt().coerceIn(1, 100)
         }
-        val warning = lost == 0 && probes.none { it.incomplete } && stream.penalty == 0 && gateway.restricted
-        val finished = probes.count { !it.incomplete }
+        val streamStatus = when {
+            stalled -> "STALL (−25)"
+            failedDownloads > 0 -> "Сбой · $failedDownloads/3"
+            downloads.all { it.state == ProbeState.OK } -> "OK"
+            else -> "не измерен"
+        }
         val details = listOf(
-            "Прогретая медиана · ${number(median)} мс  (${number(latencyPoints)}/20)",
-            "Джиттер · ${number(jitter)} мс  (${number(jitterPoints)}/30)",
-            "Холодный старт · ${number(cold.millis)} мс  (${number(handshakePoints)}/15)",
-            "Неудачные пробы · $lost/$finished  (" + (if (finished == 6) "$lossPoints/35" else "замер неполный") + ")",
-            "Ответы · " + burst.joinToString(" / ") {
-                when {
-                    it.millis == null -> it.reason
-                    it.reused -> number(it.millis)
-                    else -> "${number(it.millis)} (новое соединение)"
-                }
-            },
-            "Поток · ${stream.description}" + (stream.penalty?.let { "  (−$it)" } ?: ""),
-            "Шлюз · ${gateway.description}" + (if (warning) " · возможное ограничение выхода" else ""),
-        ).joinToString("\n")
-        return QualityReport(score, details, warning)
+            "Floor: ${number(floor)} мс | Idle: ${number(median)} мс (+${number(idleBloat)} мс)",
+            "Loaded (192KB): ${number(loaded.millis)} мс (${number(loadRatio)}x) [${rpmPoints.roundToInt()}/25]",
+            "Tab: ${number(tab.millis)} мс (${number(tabRatio)}x) | Cold: ${number(cold.millis)} мс [${navPoints.roundToInt()}/20]",
+            "Jitter: ${number(jitter)} мс [${jitterPoints.roundToInt()}/20] | Loss: $loss/9 [$lossPoints/35]",
+            "Stream: $streamStatus · ${downloads.sumOf { it.bytes } / 1024}/192 КиБ | Gateway: ${gateway.status}",
+        ) + listOfNotNull(
+            "Замер неполный".takeIf { score == null },
+            "Штраф за маршрут: −${number(routePenalty)}".takeIf { routePenalty > 0 },
+        )
+        return QualityReport(score, details.joinToString("\n"), gateway.restricted)
     }
+
+    private fun linear(value: Double?, best: Double, worst: Double, points: Double): Double =
+        value?.let { points * ((worst - it) / (worst - best)).coerceIn(0.0, 1.0) } ?: 0.0
+
+    private fun number(value: Double?): String =
+        value?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "—"
 }

@@ -133,10 +133,14 @@ index 28bcdd4..c161e6b 100644
  # python bytecode
  __pycache__/
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6460f87..e3f3810 100644
+index 6460f87..9d109aa 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,3 +1,105 @@
+@@ -1,3 +1,109 @@
++#### 2.0.7-quality.22
++
++* Measure first visit, new-tab navigation, idle jitter and latency under three parallel 64 KiB transfers. Tap the score for the measured values and the separate gateway status.
++
 +#### 2.0.7-quality.21
 +
 +* Measure cold start, five keep-alive requests, a 64 KiB transfer and the configured HTTPS gateway. Tap a profile score for the measurements.
@@ -243,10 +247,10 @@ index 6460f87..e3f3810 100644
  
  * Add Service check **1**
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 60a8d6a..6de4d65 100644
+index 60a8d6a..a925b82 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
-@@ -78,7 +78,6 @@ dependencies {
+@@ -78,10 +78,10 @@ dependencies {
  
      implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.3")
      implementation("org.yaml:snakeyaml:1.30")
@@ -254,6 +258,10 @@ index 60a8d6a..6de4d65 100644
      implementation("com.jakewharton:process-phoenix:2.1.2")
  
      testImplementation("junit:junit:4.13.2")
++    testImplementation("com.squareup.okhttp3:mockwebserver:5.0.0-alpha.3")
+     testImplementation("org.json:json:20231013")
+ 
+     implementation("com.simplecityapps:recyclerview-fastscroll:2.0.1") {
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
 index 92be488..13a3c70 100644
 --- a/app/src/main/AndroidManifest.xml
@@ -1555,90 +1563,246 @@ index 30d8cda..c8fdaaa 100644
          }
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
 new file mode 100644
-index 0000000..baeaa17
+index 0000000..398662a
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/ConnectionQuality.kt
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,110 @@
 +package io.nekohasekai.sagernet.bg.test
 +
 +import java.util.Locale
 +import kotlin.math.abs
-+import kotlin.math.ceil
 +import kotlin.math.pow
 +import kotlin.math.roundToInt
 +
-+/** A miss is an attempted application probe. A deadline or an invalid baseline yields no comparable result. */
-+internal data class QualityProbe(
-+    val millis: Double? = null,
-+    val reused: Boolean = false,
-+    val timeout: Boolean = false,
-+    val incomplete: Boolean = false,
-+    val reason: String = "",
-+)
++internal enum class ProbeState { OK, LOST, SKIPPED }
 +
-+internal data class StreamProbe(val description: String, val penalty: Int?, val reached: Boolean = false) {
++internal data class QualityTiming(
++    val state: ProbeState,
++    val millis: Double? = null,
++) {
 +    companion object {
-+        fun complete(maxGapMs: Double): StreamProbe {
-+            val penalty = ceil((maxGapMs - 500.0).coerceAtLeast(0.0) / 60.0).toInt().coerceAtMost(15)
-+            return StreamProbe("64 КиБ · пауза до ${maxGapMs.roundToInt()} мс", penalty, true)
-+        }
++        val lost = QualityTiming(ProbeState.LOST)
++        val skipped = QualityTiming(ProbeState.SKIPPED)
++        fun ok(millis: Double?) = QualityTiming(ProbeState.OK, millis)
 +    }
 +}
 +
-+internal data class GatewayProbe(val description: String, val restricted: Boolean = false, val reached: Boolean = false)
++internal data class DownloadProbe(val state: ProbeState, val bytes: Int, val stalled: Boolean)
++internal data class GatewayProbe(val status: String, val restricted: Boolean = false)
 +internal data class QualityReport(val score: Int?, val details: String, val gatewayWarning: Boolean = false)
 +
 +internal object ConnectionQuality {
-+    private fun number(n: Double?) = n?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "—"
++    const val IDLE_REQUESTS = 6
++    const val DOWNLOADS = 3
++    const val STREAM_BYTES = 64 * 1024
++    private const val CONTROL_REQUESTS = IDLE_REQUESTS + 3
 +
-+    fun evaluate(cold: QualityProbe, burst: List<QualityProbe>, stream: StreamProbe, gateway: GatewayProbe): QualityReport {
-+        require(burst.size == 5)
-+        val probes = listOf(cold) + burst
-+        val warm = burst.map { probe -> probe.millis.takeIf { probe.reused } }
-+        val sorted = warm.filterNotNull().sorted()
++    fun evaluate(
++        cold: QualityTiming,
++        tab: QualityTiming,
++        idle: List<QualityTiming>,
++        loaded: QualityTiming,
++        downloads: List<DownloadProbe>,
++        gateway: GatewayProbe,
++    ): QualityReport {
++        require(idle.size == IDLE_REQUESTS && downloads.size == DOWNLOADS)
++        val controls = listOf(cold, tab, loaded) + idle
++        val losses = controls.count { it.state == ProbeState.LOST }
++        val failedDownloads = downloads.count { it.state == ProbeState.LOST }
++        val loss = losses + 2 * failedDownloads
++        val lossPoints = when (loss) {
++            0 -> 35
++            1 -> 15
++            2 -> 4
++            else -> 0
++        }
++
++        val successful = idle.mapNotNull { it.millis }
++        val sorted = successful.sorted()
++        val floor = sorted.firstOrNull()
 +        val median = if (sorted.isEmpty()) null else (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
-+        val differences = warm.zipWithNext().mapNotNull { (a, b) -> if (a == null || b == null) null else abs(a - b) }
-+        val jitter = differences.takeIf { it.isNotEmpty() }?.average()
-+        val lost = probes.count { it.millis == null && !it.incomplete }
-+        val lossPoints = when (lost) { 0 -> 35; 1 -> 20; 2 -> 8; else -> 0 }
-+        val jitterPoints = when {
-+            jitter == null || jitter >= 40 -> 0.0
-+            jitter <= 4 -> 30.0
-+            else -> 30 * (1 - ((jitter - 4) / 36).pow(0.85))
++        val idleBloat = if (median != null && floor != null) median - floor else null
++        val deltas = successful.zipWithNext { a, b -> abs(a - b) }.sorted()
++        val cleanDeltas = if (deltas.size >= 3) deltas.dropLast(1) else deltas
++        val jitter = cleanDeltas.takeIf { it.isNotEmpty() }?.average()
++        val loadRatio = median?.let { m -> loaded.millis?.div(m.coerceAtLeast(20.0)) }
++        val loadDelta = median?.let { m -> loaded.millis?.minus(m)?.coerceAtLeast(0.0) }
++        val base = floor?.coerceAtLeast(20.0)
++        val tabRatio = base?.let { tab.millis?.div(it) }
++        val coldRatio = base?.let { cold.millis?.div(it) }
++
++        val loadedPoints = when {
++            loadRatio == null || loadDelta == null -> 0.0
++            loadDelta <= 28.0 -> 18.0
++            else -> linear(loadRatio, 1.35, 3.6, 18.0)
 +        }
-+        val latencyPoints = median?.let { 20 * ((350 - it) / 265).coerceIn(0.0, 1.0) } ?: 0.0
-+        val ratio = median?.let { cold.millis?.div(it.coerceAtLeast(15.0)) }
-+        val handshakePoints = when {
-+            cold.millis == null -> 0.0
-+            cold.millis <= 160 -> 15.0
-+            ratio == null -> 0.0
-+            else -> 15 * ((6 - ratio) / 4.2).coerceIn(0.0, 1.0)
-+        }
-+        val allTimedOut = probes.all { it.timeout } && !stream.reached && !gateway.reached
++        val rpmPoints = loadedPoints + linear(idleBloat, 4.5, 35.0, 7.0)
++        val jitterPoints = jitter?.let { 20.0 * (1.0 - ((it - 5.5) / 32.5).coerceIn(0.0, 1.0).pow(0.85)) } ?: 0.0
++        val tabPoints = if (floor != null && tab.millis != null && tab.millis - floor <= 35.0) 13.0
++            else linear(tabRatio, 1.35, 3.2, 13.0)
++        val coldPoints = if (cold.millis != null && cold.millis <= 180.0) 7.0
++            else linear(coldRatio, 2.4, 5.5, 7.0)
++        val navPoints = tabPoints + coldPoints
++        val routePenalty = floor?.let { ((it - 205.0) * 0.14).coerceIn(0.0, 25.0) } ?: 0.0
++        val stalled = downloads.any { it.stalled }
++        val stallPenalty = if (stalled) 25 else 0
 +        val score = when {
-+            allTimedOut -> 0
-+            probes.any { it.incomplete } || stream.penalty == null -> null
-+            sorted.isEmpty() && lost < 6 -> null
-+            else -> (lossPoints + jitterPoints + latencyPoints + handshakePoints - stream.penalty).roundToInt().coerceIn(1, 100)
++            losses == CONTROL_REQUESTS -> 0
++            controls.any { it.state == ProbeState.SKIPPED } || downloads.any { it.state == ProbeState.SKIPPED } -> null
++            else -> (lossPoints + rpmPoints + jitterPoints + navPoints - stallPenalty - routePenalty)
++                .roundToInt().coerceIn(1, 100)
 +        }
-+        val warning = lost == 0 && probes.none { it.incomplete } && stream.penalty == 0 && gateway.restricted
-+        val finished = probes.count { !it.incomplete }
++        val streamStatus = when {
++            stalled -> "STALL (−25)"
++            failedDownloads > 0 -> "Сбой · $failedDownloads/3"
++            downloads.all { it.state == ProbeState.OK } -> "OK"
++            else -> "не измерен"
++        }
 +        val details = listOf(
-+            "Прогретая медиана · ${number(median)} мс  (${number(latencyPoints)}/20)",
-+            "Джиттер · ${number(jitter)} мс  (${number(jitterPoints)}/30)",
-+            "Холодный старт · ${number(cold.millis)} мс  (${number(handshakePoints)}/15)",
-+            "Неудачные пробы · $lost/$finished  (" + (if (finished == 6) "$lossPoints/35" else "замер неполный") + ")",
-+            "Ответы · " + burst.joinToString(" / ") {
-+                when {
-+                    it.millis == null -> it.reason
-+                    it.reused -> number(it.millis)
-+                    else -> "${number(it.millis)} (новое соединение)"
-+                }
-+            },
-+            "Поток · ${stream.description}" + (stream.penalty?.let { "  (−$it)" } ?: ""),
-+            "Шлюз · ${gateway.description}" + (if (warning) " · возможное ограничение выхода" else ""),
-+        ).joinToString("\n")
-+        return QualityReport(score, details, warning)
++            "Floor: ${number(floor)} мс | Idle: ${number(median)} мс (+${number(idleBloat)} мс)",
++            "Loaded (192KB): ${number(loaded.millis)} мс (${number(loadRatio)}x) [${rpmPoints.roundToInt()}/25]",
++            "Tab: ${number(tab.millis)} мс (${number(tabRatio)}x) | Cold: ${number(cold.millis)} мс [${navPoints.roundToInt()}/20]",
++            "Jitter: ${number(jitter)} мс [${jitterPoints.roundToInt()}/20] | Loss: $loss/9 [$lossPoints/35]",
++            "Stream: $streamStatus · ${downloads.sumOf { it.bytes } / 1024}/192 КиБ | Gateway: ${gateway.status}",
++        ) + listOfNotNull(
++            "Замер неполный".takeIf { score == null },
++            "Штраф за маршрут: −${number(routePenalty)}".takeIf { routePenalty > 0 },
++        )
++        return QualityReport(score, details.joinToString("\n"), gateway.restricted)
++    }
++
++    private fun linear(value: Double?, best: Double, worst: Double, points: Double): Double =
++        value?.let { points * ((worst - it) / (worst - best)).coerceIn(0.0, 1.0) } ?: 0.0
++
++    private fun number(value: Double?): String =
++        value?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "—"
++}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityDns.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityDns.kt
+new file mode 100644
+index 0000000..9746955
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityDns.kt
+@@ -0,0 +1,122 @@
++package io.nekohasekai.sagernet.bg.test
++
++import android.net.DnsResolver
++import android.net.Network
++import android.os.Build
++import android.os.CancellationSignal
++import io.nekohasekai.sagernet.bg.CoreRuntime
++import io.nekohasekai.sagernet.bg.proto.CoreConfig
++import io.nekohasekai.sagernet.outbound.json.JsonInput
++import io.nekohasekai.sagernet.outbound.json.JsonArray
++import io.nekohasekai.sagernet.outbound.json.JsonObject
++import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
++import io.nekohasekai.sagernet.outbound.link.Hosts
++import io.throneproj.mobile.Instance
++import io.throneproj.mobile.Mobile
++import io.throneproj.mobile.ResolveRequest
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.async
++import kotlinx.coroutines.coroutineScope
++import kotlinx.coroutines.runInterruptible
++import kotlinx.coroutines.suspendCancellableCoroutine
++import kotlinx.coroutines.withTimeoutOrNull
++import java.net.InetAddress
++import java.net.UnknownHostException
++import kotlin.coroutines.resume
++
++/** Pin local dial lookups in this instance only, keeping the hostname for SNI and certificate checks. */
++internal suspend fun prepareQualityDns(config: JsonObject, network: Network?): Int = coroutineScope {
++    val direct = config.array("outbounds").filterIsInstance<JsonObject>()
++        .filter { it.string("detour").isBlank() }
++        .map { it to listOf(it.string("server")).filter(::isDomain) }
++    val wireGuard = config.array("endpoints").filterIsInstance<JsonObject>()
++        .filter { it.string("type") == "wireguard" && it.string("detour").isBlank() }
++        .map { endpoint ->
++            endpoint to endpoint.array("peers").filterIsInstance<JsonObject>()
++                .map { it.string("address") }.filter(::isDomain)
++        }
++    val dials = (direct + wireGuard).filter { (_, hosts) -> hosts.isNotEmpty() }
++    val lookups = dials.flatMap { it.second }.distinct().associateWith { host ->
++        async {
++            withTimeoutOrNull(1800) { resolveQualityHost(network, host) }.orEmpty()
++                .mapNotNull { it.hostAddress?.substringBefore('%') }.distinct()
++        }
++    }
++    val predefined = JsonObject()
++    for ((host, result) in lookups) {
++        val ips = result.await()
++        if (ips.isEmpty()) continue
++        predefined[host] = JsonArray().also { addresses -> ips.forEach(addresses::add) }
++    }
++    if (predefined.isEmpty()) return@coroutineScope lookups.size
++
++    val dns = config.obj("dns")
++    val servers = dns.array("servers")
++    var tag = "quality-pre-resolved"
++    val tags = servers.filterIsInstance<JsonObject>().mapTo(HashSet()) { it.string("tag") }
++    while (tag in tags) tag += "-"
++    // Keep DNS final selection intact even for a custom config with no default resolver.
++    if (servers.isEmpty()) {
++        val local = "quality-system-dns"
++        servers.add(jsonObjectOf("type" to "local", "tag" to local))
++        dns["final"] = local
++    }
++    servers.add(jsonObjectOf("type" to "hosts", "tag" to tag, "predefined" to predefined))
++    dns["servers"] = servers
++    config["dns"] = dns
++    for ((dial, hosts) in dials) {
++        if (!hosts.all(predefined::contains)) continue
++        val resolver = dial.obj("domain_resolver")
++        resolver["server"] = tag
++        dial["domain_resolver"] = resolver
++    }
++    lookups.size - predefined.size
++}
++
++/** Xray dials through the native dns-direct transport, so warm its own cache before the timer. */
++internal fun warmQualityXrayDns(core: CoreConfig, instance: Instance): Int {
++    val domains = (listOfNotNull(core.xrayConfig) + core.xrayFullConfigs).flatMap { json ->
++        JsonInput.parseObject(json).array("outbounds").filterIsInstance<JsonObject>().flatMap { outbound ->
++            val settings = outbound.obj("settings")
++            if (outbound.obj("streamSettings").obj("sockopt").string("dialerProxy").isNotBlank()) emptyList()
++            else listOf(settings.string("address")) +
++                (settings.array("vnext").filterIsInstance<JsonObject>() + settings.array("servers").filterIsInstance<JsonObject>())
++                    .map { it.string("address") }
++        }
++    }.filter(::isDomain).distinct()
++    if (domains.isEmpty()) return 0
++    val request = ResolveRequest().apply { domains.forEach(::addDomain) }
++    val results = Mobile.resolveDomains(instance, CoreRuntime.platform, request)
++    var resolved = 0
++    while (results.hasNext()) if (results.next().addresses().hasNext()) resolved++
++    return domains.size - resolved
++}
++
++private fun isDomain(host: String): Boolean = host.isNotBlank() && !Hosts.isIpAddress(host)
++
++private suspend fun resolveQualityHost(network: Network?, host: String): List<InetAddress> {
++    if (Build.VERSION.SDK_INT >= 29) {
++        return suspendCancellableCoroutine { continuation ->
++            val signal = CancellationSignal()
++            continuation.invokeOnCancellation { signal.cancel() }
++            DnsResolver.getInstance().query(network, host, DnsResolver.FLAG_EMPTY, Runnable::run, signal,
++                object : DnsResolver.Callback<List<InetAddress>> {
++                    override fun onAnswer(answer: List<InetAddress>, rcode: Int) {
++                        continuation.resume(if (rcode == 0) answer else emptyList())
++                    }
++
++                    override fun onError(error: DnsResolver.DnsException) {
++                        continuation.resume(emptyList())
++                    }
++                },
++            )
++        }
++    }
++    return runInterruptible(Dispatchers.IO) {
++        try {
++            (network?.getAllByName(host) ?: InetAddress.getAllByName(host)).toList()
++        } catch (_: UnknownHostException) {
++            emptyList()
++        }
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityEnvironment.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityEnvironment.kt
@@ -1680,71 +1844,291 @@ index 0000000..ad07982
 +            "Энергосбережение".takeIf { saver }).joinToString(" · ")
 +    }
 +}
+diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualitySampler.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualitySampler.kt
+new file mode 100644
+index 0000000..83a9e3d
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualitySampler.kt
+@@ -0,0 +1,223 @@
++package io.nekohasekai.sagernet.bg.test
++
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.async
++import kotlinx.coroutines.awaitAll
++import kotlinx.coroutines.coroutineScope
++import kotlinx.coroutines.delay
++import okhttp3.Call
++import okhttp3.Connection
++import okhttp3.Credentials
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import okhttp3.Response
++import java.io.IOException
++import java.io.InterruptedIOException
++import java.net.InetSocketAddress
++import java.net.Proxy
++import java.util.concurrent.ConcurrentHashMap
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicInteger
++
++/** One budget and one isolated proxy instance, with separate HTTP pools for the first visit, new tab and downloads. */
++internal class QualitySampler(
++    port: Int,
++    username: String,
++    password: String,
++    gatewayUrl: String,
++    cloudflareUrl: String = "https://cloudflare.com/",
++    tabUrl: String = "https://gstatic.com/",
++    downloadUrl: String = "https://speed.cloudflare.com/__down?bytes=65536",
++) {
++    private val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))
++    private val credential = Credentials.basic(username, password)
++    private val baseline = head(cloudflareUrl)
++    private val tab = head(tabUrl)
++    private val gateway = head(gatewayUrl)
++    private val download = Request.Builder().url(downloadUrl).header("Accept-Encoding", "identity").build()
++    private val activeCalls = ConcurrentHashMap.newKeySet<Call>()
++    @Volatile private var cancelled = false
++    private var deadline = 0L
++
++    fun cancel() {
++        cancelled = true
++        activeCalls.forEach { it.cancel() }
++    }
++
++    suspend fun measure(): QualityReport {
++        var acquired: Connection? = null
++        val visitClient = newClient { acquired = it }
++        val tabClient = newClient()
++        val downloadClient = newClient()
++        val start = System.nanoTime()
++        deadline = start + 5200 * NS_PER_MS
++        try {
++            val cold = latency(visitClient, baseline, 2500)
++            var previous = acquired
++            val freshTab = latency(tabClient, tab, 1800)
++            val idle = ArrayList<QualityTiming>(ConnectionQuality.IDLE_REQUESTS)
++            repeat(ConnectionQuality.IDLE_REQUESTS) { index ->
++                val probe = if (index > 0 && timeLeft() < 50 * NS_PER_MS) {
++                    QualityTiming.skipped
++                } else {
++                    if (index > 0) delay(50)
++                    latency(visitClient, baseline, 1500)
++                }
++                val reused = previous != null && previous === acquired
++                if (probe.state == ProbeState.OK) previous = acquired
++                idle += if (probe.state == ProbeState.OK && !reused) QualityTiming.ok(null) else probe
++            }
++
++            val load = fanOut(visitClient, downloadClient)
++            val gatewayResult = gatewayProbe(tabClient)
++            val report = ConnectionQuality.evaluate(cold, freshTab, idle, load.timing, load.downloads, gatewayResult)
++            val measurementNotes = buildList {
++                if (load.timing.millis != null && !load.activeWhenPinged) add("Потоки завершились до контрольного запроса")
++                val newConnections = idle.count { it.state == ProbeState.OK && it.millis == null }
++                if (newConnections > 0) add("Новые соединения в серии: $newConnections")
++                add("Замер · ${(System.nanoTime() - start) / NS_PER_MS} мс")
++            }
++            return report.copy(details = report.details + "\n" + measurementNotes.joinToString("\n"))
++        } finally {
++            for (client in listOf(visitClient, tabClient, downloadClient)) {
++                client.dispatcher.cancelAll()
++                client.connectionPool.evictAll()
++                client.dispatcher.executorService.shutdown()
++            }
++        }
++    }
++
++    private data class LoadResult(
++        val timing: QualityTiming,
++        val downloads: List<DownloadProbe>,
++        val activeWhenPinged: Boolean,
++    )
++
++    private suspend fun fanOut(visitClient: OkHttpClient, downloadClient: OkHttpClient): LoadResult = coroutineScope {
++        val firstData = CompletableDeferred<Boolean>()
++        val unfinished = AtomicInteger(ConnectionQuality.DOWNLOADS)
++        val streams = List(ConnectionQuality.DOWNLOADS) {
++            async(Dispatchers.IO) {
++                try {
++                    transfer(downloadClient) { firstData.complete(true) }
++                } finally {
++                    if (unfinished.decrementAndGet() == 0) firstData.complete(false)
++                }
++            }
++        }
++        val hasData = firstData.await()
++        if (hasData && timeLeft() <= 55 * NS_PER_MS) {
++            return@coroutineScope LoadResult(QualityTiming.skipped, streams.awaitAll(), false)
++        }
++        if (hasData) delay(55)
++        val activeWhenPinged = hasData && unfinished.get() > 0
++        val probe = latency(visitClient, baseline, 1500)
++        val loaded = if (!hasData && probe.state == ProbeState.OK) QualityTiming.ok(null) else probe
++        LoadResult(loaded, streams.awaitAll(), activeWhenPinged)
++    }
++
++    private fun head(url: String) = Request.Builder().url(url).head().header("Cache-Control", "no-cache").build()
++
++    private fun newClient(acquired: ((Connection?) -> Unit)? = null): OkHttpClient = OkHttpClient.Builder()
++        .proxy(proxy)
++        .proxyAuthenticator { _, response ->
++            if (response.request.header("Proxy-Authorization") != null) null
++            else response.request.newBuilder().header("Proxy-Authorization", credential).build()
++        }
++        .apply {
++            if (acquired != null) addNetworkInterceptor { chain ->
++                acquired(chain.connection())
++                chain.proceed(chain.request())
++            }
++        }
++        .retryOnConnectionFailure(false)
++        .followRedirects(false)
++        .build()
++
++    private class BudgetExpired : IOException()
++
++    private fun timeLeft() = deadline - System.nanoTime()
++
++    private fun <T> call(client: OkHttpClient, request: Request, timeout: Long, read: (Response) -> T): T {
++        val remaining = timeLeft()
++        if (remaining <= 0) throw BudgetExpired()
++        val call = client.newCall(request)
++        call.timeout().timeout(minOf(remaining, timeout * NS_PER_MS), TimeUnit.NANOSECONDS)
++        activeCalls.add(call)
++        try {
++            if (cancelled) throw CancellationException()
++            return call.execute().use(read)
++        } catch (e: IOException) {
++            if (cancelled) throw CancellationException()
++            throw e
++        } finally {
++            activeCalls.remove(call)
++        }
++    }
++
++    private fun latency(client: OkHttpClient, request: Request, timeout: Long): QualityTiming {
++        val started = System.nanoTime()
++        return try {
++            call(client, request, timeout) {
++                if (it.code in 200..399) QualityTiming.ok((System.nanoTime() - started) / 1e6) else QualityTiming.lost
++            }
++        } catch (_: BudgetExpired) {
++            QualityTiming.skipped
++        } catch (_: IOException) {
++            QualityTiming.lost
++        }
++    }
++
++    private fun transfer(client: OkHttpClient, firstData: () -> Unit): DownloadProbe {
++        var received = 0
++        var lastChunk = 0L
++        var stalled = false
++        return try {
++            call(client, download, 3000) { response ->
++                val body = response.body
++                if (response.code != 200 || body == null ||
++                    response.header("Content-Type").orEmpty().startsWith("text/html", ignoreCase = true)
++                ) return@call DownloadProbe(ProbeState.LOST, 0, false)
++                val input = body.byteStream()
++                val buffer = ByteArray(8 * 1024)
++                while (received < ConnectionQuality.STREAM_BYTES) {
++                    val count = input.read(buffer, 0, minOf(buffer.size, ConnectionQuality.STREAM_BYTES - received))
++                    val now = System.nanoTime()
++                    if (lastChunk != 0L && now - lastChunk > 420 * NS_PER_MS) stalled = true
++                    if (count < 0) break
++                    lastChunk = now
++                    received += count
++                    firstData()
++                }
++                val state = if (received == ConnectionQuality.STREAM_BYTES) ProbeState.OK else ProbeState.LOST
++                DownloadProbe(state, received, stalled)
++            }
++        } catch (_: BudgetExpired) {
++            DownloadProbe(ProbeState.SKIPPED, 0, false)
++        } catch (_: IOException) {
++            DownloadProbe(ProbeState.LOST, received, stalled || (lastChunk != 0L && System.nanoTime() - lastChunk > 420 * NS_PER_MS))
++        }
++    }
++
++    private fun gatewayProbe(client: OkHttpClient): GatewayProbe = try {
++        call(client, gateway, 2000) {
++            when (it.code) {
++                403, 429, 503 -> GatewayProbe("ASN Throttled · HTTP ${it.code}", restricted = true)
++                in 200..399 -> GatewayProbe("OK")
++                else -> GatewayProbe("HTTP ${it.code}")
++            }
++        }
++    } catch (_: BudgetExpired) {
++        GatewayProbe("не измерен · лимит времени")
++    } catch (_: InterruptedIOException) {
++        GatewayProbe("ASN Throttled · таймаут", restricted = true)
++    } catch (_: IOException) {
++        GatewayProbe("ошибка соединения")
++    }
++
++    private companion object {
++        const val NS_PER_MS = 1_000_000L
++    }
++}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
 new file mode 100644
-index 0000000..4faaf02
+index 0000000..0fceed2
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sagernet/bg/test/QualityTestRunner.kt
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,123 @@
 +package io.nekohasekai.sagernet.bg.test
 +
 +import android.os.SystemClock
++import io.nekohasekai.sagernet.SagerNet
 +import io.nekohasekai.sagernet.bg.CoreRuntime
 +import io.nekohasekai.sagernet.bg.proto.CoreConfig
 +import io.nekohasekai.sagernet.bg.proto.CoreConfigs
 +import io.nekohasekai.sagernet.bg.proto.toStartOptions
++import io.nekohasekai.sagernet.database.DataStore
 +import io.nekohasekai.sagernet.database.ProxyEntity
 +import io.nekohasekai.sagernet.ktx.Logs
++import io.nekohasekai.sagernet.ktx.app
 +import io.nekohasekai.sagernet.outbound.config.PortLease
 +import io.nekohasekai.sagernet.outbound.json.JsonInput
 +import io.nekohasekai.sagernet.outbound.json.JsonObject
 +import io.nekohasekai.sagernet.outbound.json.JsonArray
 +import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
-+import io.throneproj.mobile.Instance
 +import io.throneproj.mobile.Mobile
 +import kotlinx.coroutines.CancellationException
 +import kotlinx.coroutines.delay
-+import io.nekohasekai.sagernet.database.DataStore
-+import io.nekohasekai.sagernet.SagerNet
-+import io.nekohasekai.sagernet.ktx.app
-+import okhttp3.Credentials
-+import okhttp3.OkHttpClient
-+import okhttp3.Request
-+import okhttp3.Response
-+import okhttp3.Connection
-+import okhttp3.Call
-+import java.io.InterruptedIOException
-+import java.io.IOException
-+import java.net.InetSocketAddress
-+import java.net.Proxy
++import kotlinx.coroutines.sync.Semaphore
++import kotlinx.coroutines.sync.withPermit
 +import java.util.UUID
-+import java.util.concurrent.TimeUnit
 +
 +/** Measures only one saved profile at a time. The probe box's authenticated loopback inlet has an explicit exit. */
 +internal class QualityTestRunner(private val session: TestSession) {
-+    @Volatile private var activeCall: Call? = null
++    @Volatile private var sampler: QualitySampler? = null
 +
-+    fun cancel() { activeCall?.cancel() }
++    fun cancel() { sampler?.cancel() }
 +
 +    suspend fun run(profiles: List<ProxyEntity>) {
 +        for (profile in profiles) {
 +            if (session.cancelled) break
-+            delay((nextProfileAt - SystemClock.elapsedRealtime()).coerceAtLeast(0))
-+            if (session.cancelled) break
-+            val network = SagerNet.underlyingNetwork
 +            val environment = QualityEnvironment.describe(app)
-+            val report = try {
-+                val measured = measure(profile)
-+                if (network != SagerNet.underlyingNetwork) QualityReport(null, "Во время замера сменилась сеть")
-+                else measured
-+            } catch (e: CancellationException) {
-+                throw e
-+            } catch (e: Exception) {
-+                Logs.w(e)
-+                QualityReport(null, "Не удалось запустить проверку профиля")
-+            } finally {
-+                // TestEngine holds its process-wide session mutex, including across successive sweeps.
-+                nextProfileAt = SystemClock.elapsedRealtime() + 250
++            val report = queue.withPermit {
++                delay((nextProfileAt - SystemClock.elapsedRealtime()).coerceAtLeast(0))
++                if (session.cancelled) return
++                val network = SagerNet.underlyingNetwork
++                try {
++                    val measured = measure(profile)
++                    if (network != SagerNet.underlyingNetwork) QualityReport(null, "Во время замера сменилась сеть")
++                    else measured
++                } catch (e: CancellationException) {
++                    throw e
++                } catch (e: Exception) {
++                    Logs.w(e)
++                    QualityReport(null, "Не удалось запустить проверку профиля")
++                } finally {
++                    nextProfileAt = SystemClock.elapsedRealtime() + 350
++                }
 +            }
 +            if (!session.cancelled) session.reportQuality(profile, report.copy(details = report.details + "\n" + environment))
 +        }
@@ -1781,16 +2165,24 @@ index 0000000..4faaf02
 +            for (rule in route.array("rules")) rules.add(rule)
 +            route["rules"] = rules
 +
++            val unresolved = prepareQualityDns(config, SagerNet.underlyingNetwork)
++            if (session.cancelled) throw CancellationException()
 +            val options = core.copy(coreConfig = config.toCompact()).toStartOptions()
-+            var instance: Instance? = null
++            val test = QualitySampler(port, PROBE_USER, password, DataStore.qualityGatewayUrl)
++            val instance = Mobile.newInstance(CoreRuntime.platform, options)
 +            try {
-+                return probe(port, password) {
-+                    val box = Mobile.newInstance(CoreRuntime.platform, options)
-+                    instance = box
-+                    box.start()
-+                }
++                sampler = test
++                if (session.cancelled) throw CancellationException()
++                instance.start()
++                val unresolvedXray = warmQualityXrayDns(core, instance)
++                if (session.cancelled) throw CancellationException()
++                val report = test.measure()
++                val failures = unresolved + unresolvedXray
++                if (failures == 0) return report
++                return report.copy(details = report.details + "\nDNS до старта: адреса получены не для всех узлов ($failures)")
 +            } finally {
-+                runCatching { instance?.close() }.onFailure { Logs.w(it) }
++                sampler = null
++                runCatching { instance.close() }.onFailure { Logs.w(it) }
 +            }
 +        } finally {
 +            ports.close()
@@ -1802,153 +2194,12 @@ index 0000000..4faaf02
 +            ?: (config.array("outbounds").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 +            ?: (config.array("endpoints").firstOrNull() as? JsonObject)?.string("tag")?.takeIf { it.isNotBlank() }
 +
-+    private suspend fun probe(port: Int, password: String, startCore: () -> Unit): QualityReport {
-+        val credential = Credentials.basic(PROBE_USER, password)
-+        var connection: Connection? = null
-+        val client = OkHttpClient.Builder()
-+            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port)))
-+            .proxyAuthenticator { _, response ->
-+                if (response.request.header("Proxy-Authorization") != null) null
-+                else response.request.newBuilder().header("Proxy-Authorization", credential).build()
-+            }
-+            .addNetworkInterceptor { chain ->
-+                connection = chain.connection()
-+                chain.proceed(chain.request())
-+            }
-+            .retryOnConnectionFailure(false)
-+            .followRedirects(false)
-+            .build()
-+        val baseline = Request.Builder().url(BASELINE).header("Cache-Control", "no-cache").build()
-+        var previous: Connection? = null
-+
-+        fun baselineProbe(startTime: Long, timeout: Long, phaseDeadline: Long): QualityProbe {
-+            return try {
-+                call(client, baseline, phaseDeadline, timeout) { response ->
-+                    val ms = (SystemClock.elapsedRealtimeNanos() - startTime) / 1e6
-+                    val reused = previous != null && previous === connection
-+                    previous = connection
-+                    if (response.code == 204) QualityProbe(ms, reused)
-+                    else QualityProbe(incomplete = true, reason = "HTTP ${response.code}")
-+                }
-+            } catch (_: BudgetExpired) {
-+                QualityProbe(incomplete = true, reason = "лимит времени")
-+            } catch (_: InterruptedIOException) {
-+                QualityProbe(timeout = true, reason = "таймаут")
-+            } catch (_: IOException) {
-+                QualityProbe(reason = "сбой")
-+            }
-+        }
-+
-+        try {
-+            val start = SystemClock.elapsedRealtimeNanos()
-+            startCore()
-+            val deadline = start + 3500 * NS_PER_MS
-+            // Leave time for independent origins even if the baseline endpoint stops answering.
-+            val burstDeadline = deadline - 800 * NS_PER_MS
-+            val streamDeadline = deadline - 350 * NS_PER_MS
-+            val coldBudget = 2000L - (SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS
-+            val cold = if (coldBudget > 0) baselineProbe(start, coldBudget, burstDeadline)
-+                else QualityProbe(incomplete = true, reason = "долгий старт ядра")
-+            val burst = mutableListOf<QualityProbe>()
-+            repeat(5) { index ->
-+                if (index > 0) delay(((burstDeadline - SystemClock.elapsedRealtimeNanos()) / NS_PER_MS).coerceIn(0, 80))
-+                burst += baselineProbe(SystemClock.elapsedRealtimeNanos(), 1500, burstDeadline)
-+            }
-+            val stream = streamProbe(client, streamDeadline)
-+            val gateway = gatewayProbe(client, deadline)
-+            val report = ConnectionQuality.evaluate(cold, burst, stream, gateway)
-+            return report.copy(details = report.details + "\nЗамер · ${(SystemClock.elapsedRealtimeNanos() - start) / NS_PER_MS} мс")
-+        } finally {
-+            client.dispatcher.cancelAll()
-+            client.connectionPool.evictAll()
-+            client.dispatcher.executorService.shutdown()
-+        }
-+    }
-+
-+    private class BudgetExpired : IOException()
-+
-+    private fun <T> call(client: OkHttpClient, request: Request, deadline: Long, timeoutMs: Long, read: (Response) -> T): T {
-+        val remaining = deadline - SystemClock.elapsedRealtimeNanos()
-+        if (remaining <= 0) throw BudgetExpired()
-+        val limit = minOf(remaining, timeoutMs * NS_PER_MS)
-+        val call = client.newCall(request)
-+        call.timeout().timeout(limit, TimeUnit.NANOSECONDS)
-+        activeCall = call
-+        try {
-+            if (session.cancelled) throw CancellationException()
-+            return call.execute().use(read)
-+        } catch (e: IOException) {
-+            if (session.cancelled) throw CancellationException()
-+            if (limit == remaining && (SystemClock.elapsedRealtimeNanos() >= deadline || e is InterruptedIOException)) {
-+                throw BudgetExpired()
-+            }
-+            throw e
-+        } finally {
-+            activeCall = null
-+        }
-+    }
-+
-+    private fun streamProbe(client: OkHttpClient, deadline: Long): StreamProbe {
-+        val request = Request.Builder().url(STREAM).header("Accept-Encoding", "identity").build()
-+        var received = 0
-+        var reached = false
-+        return try {
-+            call(client, request, deadline, 1500) { response ->
-+                reached = true
-+                val body = response.body
-+                if (response.code != 200 || body == null) return@call StreamProbe("HTTP ${response.code}", null, true)
-+                if (response.header("Content-Type").orEmpty().startsWith("text/html")) {
-+                    return@call StreamProbe("вместо блока получена HTML-страница", null, true)
-+                }
-+                val buffer = ByteArray(8192)
-+                val input = body.byteStream()
-+                var previous = SystemClock.elapsedRealtimeNanos()
-+                var maxGap = 0L
-+                while (received < STREAM_BYTES) {
-+                    val count = input.read(buffer, 0, minOf(buffer.size, STREAM_BYTES - received))
-+                    if (count < 0) return@call StreamProbe("обрыв · $received Б", 15, true)
-+                    val now = SystemClock.elapsedRealtimeNanos()
-+                    maxGap = maxOf(maxGap, now - previous)
-+                    previous = now
-+                    received += count
-+                }
-+                StreamProbe.complete(maxGap / 1e6)
-+            }
-+        } catch (_: BudgetExpired) {
-+            StreamProbe("лимит времени · $received Б", null, reached)
-+        } catch (_: IOException) {
-+            StreamProbe("сбой потока · $received Б", 15, reached)
-+        }
-+    }
-+
-+    private fun gatewayProbe(client: OkHttpClient, deadline: Long): GatewayProbe {
-+        val request = try {
-+            Request.Builder().url(DataStore.qualityGatewayUrl).head().build()
-+        } catch (_: IllegalArgumentException) {
-+            return GatewayProbe("некорректный адрес")
-+        }
-+        return try {
-+            call(client, request, deadline, 1000) {
-+                GatewayProbe("HTTP ${it.code}", it.code == 403 || it.code == 503, true)
-+            }
-+        } catch (_: BudgetExpired) {
-+            GatewayProbe("не измерен · лимит времени")
-+        } catch (_: InterruptedIOException) {
-+            GatewayProbe("таймаут", restricted = true)
-+        } catch (_: IOException) {
-+            GatewayProbe("ошибка соединения")
-+        }
-+    }
-+
 +    private companion object {
++        val queue = Semaphore(1)
 +        var nextProfileAt = 0L
-+        const val NS_PER_MS = 1_000_000L
 +        const val LOOPBACK = "127.0.0.1"
 +        const val PROBE_USER = "quality"
 +        const val PROBE_INBOUND = "throne-quality-probe"
-+        const val BASELINE = "https://cp.cloudflare.com/generate_204"
-+        const val STREAM_BYTES = 65536
-+        const val STREAM = "https://speed.cloudflare.com/__down?bytes=65536"
 +    }
 +}
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt b/app/src/main/java/io/nekohasekai/sagernet/bg/test/TestNotification.kt
@@ -2868,14 +3119,14 @@ index 9d0d649..d46e3dd 100644
              SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
              val db = buildProfileDatabase()
 diff --git a/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt b/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
-index 89da43c..b9cb20c 100644
+index 89da43c..5d177e2 100644
 --- a/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
 +++ b/app/src/main/java/io/nekohasekai/sagernet/database/SettingsRegistry.kt
 @@ -263,6 +263,9 @@ object SettingsRegistry {
  
      // ------------------------------------------------------------------------------------------------ testing
  
-+    @JvmField val QUALITY_GATEWAY_URL = string("quality_gateway_url", "https://alkalimakersuite-pa.clients6.google.com/") {
++    @JvmField val QUALITY_GATEWAY_URL = string("quality_gateway_url", "https://google.com/") {
 +        it.startsWith("https://", ignoreCase = true) && SpeedTestSettings.isValidHttpUrl(it)
 +    }
      @JvmField val TEST_URL = string("test_url", "http://cp.cloudflare.com/") { it.isNotBlank() }
@@ -14419,66 +14670,179 @@ index eeb6642..c44a8cb 100644
              app:key="direct_test_url"
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/test/ConnectionQualityTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/test/ConnectionQualityTest.kt
 new file mode 100644
-index 0000000..95937a8
+index 0000000..e5d2647
 --- /dev/null
 +++ b/app/src/test/java/io/nekohasekai/sagernet/bg/test/ConnectionQualityTest.kt
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,87 @@
 +package io.nekohasekai.sagernet.bg.test
 +
-+import org.junit.Assert.*
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
 +import org.junit.Test
++import kotlin.math.pow
++import kotlin.math.roundToInt
 +
 +class ConnectionQualityTest {
-+    private val cold = QualityProbe(145.0)
-+    private val burst = List(5) { QualityProbe(80.0, reused = true) }
-+    private val stream = StreamProbe.complete(40.0)
-+    private val gateway = GatewayProbe("HTTP 200", reached = true)
++    private val idle = List(6) { QualityTiming.ok(65.0) }
++    private val healthy = List(3) { DownloadProbe(ProbeState.OK, 65536, false) }
 +
-+    @Test fun plateauAndIndependentGateway() {
-+        for (code in listOf(403, 503)) {
-+            val report = ConnectionQuality.evaluate(cold, burst, stream, GatewayProbe("HTTP $code", true, true))
-+            assertEquals(100, report.score)
-+            assertTrue(report.gatewayWarning)
++    private fun score(
++        cold: QualityTiming = QualityTiming.ok(130.0),
++        tab: QualityTiming = QualityTiming.ok(90.0),
++        idle: List<QualityTiming> = this.idle,
++        loaded: QualityTiming = QualityTiming.ok(80.0),
++        downloads: List<DownloadProbe> = healthy,
++        gateway: GatewayProbe = GatewayProbe("OK"),
++    ) = ConnectionQuality.evaluate(cold, tab, idle, loaded, downloads, gateway)
++
++    @Test fun scoreCeilingAndGatewayIsolation() {
++        assertEquals(100, score().score)
++        val report = score(gateway = GatewayProbe("ASN Throttled", true))
++        assertEquals(100, report.score)
++        assertTrue(report.gatewayWarning)
++        assertFalse(score().gatewayWarning)
++    }
++
++    @Test fun lossAndStallPenalties() {
++        val lostIdle = idle.toMutableList()
++        lostIdle[2] = QualityTiming.lost
++        assertEquals(80, score(idle = lostIdle).score)
++        lostIdle[3] = QualityTiming.lost
++        assertEquals(69, score(idle = lostIdle).score)
++        lostIdle[4] = QualityTiming.lost
++        assertEquals(65, score(idle = lostIdle).score)
++
++        val downloads = healthy.toMutableList()
++        downloads[0] = DownloadProbe(ProbeState.OK, 65536, true)
++        downloads[1] = DownloadProbe(ProbeState.OK, 65536, true)
++        assertEquals(75, score(downloads = downloads).score)
++        downloads[1] = DownloadProbe(ProbeState.LOST, 8192, true)
++        val report = score(downloads = downloads)
++        assertEquals(44, report.score)
++        assertTrue(report.details.contains("Loss: 2/9 [4/35]"))
++    }
++
++    @Test fun unavailableAndIncompleteAreDistinct() {
++        val lost = QualityTiming.lost
++        val missed = List(6) { lost }
++        assertEquals(0, score(lost, lost, missed, lost).score)
++        assertNull(score(lost, lost, missed, QualityTiming.skipped).score)
++        assertNull(score(downloads = listOf(healthy[0], healthy[1], DownloadProbe(ProbeState.SKIPPED, 0, false))).score)
++        assertEquals(1, score(lost, lost, missed, QualityTiming.ok(null)).score)
++    }
++
++    @Test fun allowancesAndLinearWeights() {
++        assertEquals(100, score(loaded = QualityTiming.ok(93.0), tab = QualityTiming.ok(100.0)).score)
++        val backlog = score(
++            idle = listOf(60.0, 66.0, 66.0, 72.0, 72.0, 72.0).map(QualityTiming::ok),
++            loaded = QualityTiming.ok(207.0),
++            tab = QualityTiming.ok(150.0),
++            cold = QualityTiming.ok(240.0),
++        )
++        val expected = (35 + 18.0 * (1 - (3.0 - 1.35) / 2.25) +
++            7.0 * (1 - (9.0 - 4.5) / 30.5) + 20 +
++            13.0 * (1 - (2.5 - 1.35) / 1.85) + 7.0 * (1 - (4.0 - 2.4) / 3.1)).roundToInt()
++        assertEquals(expected, backlog.score)
++
++        val limited = List(6) { QualityTiming.ok(10.0) }
++        assertEquals(100, score(QualityTiming.ok(180.0), QualityTiming.ok(45.0), limited, QualityTiming.ok(38.0)).score)
++    }
++
++    @Test fun excludeLargestJitterAndCapRoutePenalty() {
++        val jittered = score(idle = listOf(65.0, 70.0, 65.0, 95.0, 65.0, 70.0).map(QualityTiming::ok))
++        val clean = (5.0 + 5.0 + 5.0 + 30.0) / 4
++        val expected = (80 + 20.0 * (1 - ((clean - 5.5) / 32.5).pow(0.85))).roundToInt()
++        assertEquals(expected, jittered.score)
++        val longRoute = List(6) { QualityTiming.ok(255.0) }
++        assertEquals(93, score(QualityTiming.ok(500.0), QualityTiming.ok(260.0), longRoute, QualityTiming.ok(260.0)).score)
++        val farRoute = List(6) { QualityTiming.ok(500.0) }
++        assertEquals(75, score(QualityTiming.ok(800.0), QualityTiming.ok(540.0), farRoute, QualityTiming.ok(540.0)).score)
++    }
++}
+diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/test/QualitySamplerTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/test/QualitySamplerTest.kt
+new file mode 100644
+index 0000000..6f9ea93
+--- /dev/null
++++ b/app/src/test/java/io/nekohasekai/sagernet/bg/test/QualitySamplerTest.kt
+@@ -0,0 +1,78 @@
++package io.nekohasekai.sagernet.bg.test
++
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.runBlocking
++import okhttp3.mockwebserver.Dispatcher
++import okhttp3.mockwebserver.MockResponse
++import okhttp3.mockwebserver.MockWebServer
++import okhttp3.mockwebserver.RecordedRequest
++import okio.Buffer
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import java.net.InetAddress
++import java.net.URI
++import java.util.Collections
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++
++class QualitySamplerTest {
++    @Test fun freshTabKeepAliveFanOutAndRestrictedGateway() = runBlocking(Dispatchers.IO) {
++        checkTraffic(85, stalled = false)
++    }
++
++    @Test fun interChunkStallIsReported() = runBlocking(Dispatchers.IO) {
++        checkTraffic(440, stalled = true)
++    }
++
++    private suspend fun checkTraffic(chunkDelay: Long, stalled: Boolean) {
++        val visits = Collections.synchronizedList(mutableListOf<Int>())
++        val tabs = Collections.synchronizedList(mutableListOf<Int>())
++        val streams = CountDownLatch(3)
++        val gateway = CountDownLatch(1)
++        val loadedPrecededGateway = CountDownLatch(1)
++        MockWebServer().use { server ->
++            server.dispatcher = object : Dispatcher() {
++                override fun dispatch(request: RecordedRequest): MockResponse = when (URI(request.requestLine.split(" ")[1]).path) {
++                    "/visit" -> {
++                        visits.add(request.sequenceNumber)
++                        if (visits.size == 8 && streams.count == 0L && gateway.count == 1L) loadedPrecededGateway.countDown()
++                        MockResponse().setResponseCode(204)
++                    }
++                    "/tab" -> {
++                        tabs.add(request.sequenceNumber)
++                        MockResponse().setResponseCode(204)
++                    }
++                    "/stream" -> {
++                        streams.countDown()
++                        check(streams.await(2, TimeUnit.SECONDS))
++                        MockResponse().setBody(Buffer().write(ByteArray(65536)))
++                            .throttleBody(if (stalled) 32768 else 8192, chunkDelay, TimeUnit.MILLISECONDS)
++                    }
++                    "/gateway" -> {
++                        gateway.countDown()
++                        MockResponse().setResponseCode(429)
++                    }
++                    else -> MockResponse().setResponseCode(404)
++                }
++            }
++            server.start(InetAddress.getByName("127.0.0.1"), 0)
++            val result = QualitySampler(
++                server.port, "quality", "test",
++                gatewayUrl = "http://test.invalid/gateway",
++                cloudflareUrl = "http://test.invalid/visit",
++                tabUrl = "http://test.invalid/tab",
++                downloadUrl = "http://test.invalid/stream",
++            ).measure()
++            assertEquals((0..7).toList(), visits)
++            assertEquals(listOf(0), tabs)
++            assertEquals(0L, loadedPrecededGateway.count)
++            assertEquals(0L, gateway.count)
++            assertNotNull(result.score)
++            assertTrue(result.gatewayWarning)
++            val streamStatus = if (stalled) "STALL (−25)" else "OK"
++            assertTrue(result.details, result.details.contains("Stream: $streamStatus · 192/192 КиБ"))
 +        }
-+        assertEquals(100, ConnectionQuality.evaluate(cold, burst, stream, GatewayProbe("лимит времени")).score)
-+    }
-+
-+    @Test fun lossJitterAndStreamStallAffectSeparateComponents() {
-+        val loss = burst.toMutableList().apply { this[2] = QualityProbe(timeout = true) }
-+        assertEquals(85, ConnectionQuality.evaluate(cold, loss, stream, gateway).score)
-+        loss[1] = QualityProbe(timeout = true)
-+        assertEquals(73, ConnectionQuality.evaluate(cold, loss, stream, gateway).score)
-+        val unstable = listOf(60, 100, 60, 100, 60).map { QualityProbe(it.toDouble(), true) }
-+        assertEquals(70, ConnectionQuality.evaluate(cold, unstable, stream, gateway).score)
-+        assertEquals(100, ConnectionQuality.evaluate(cold, burst, StreamProbe.complete(500.0), gateway).score)
-+        val stalled = ConnectionQuality.evaluate(cold, burst, StreamProbe.complete(1400.0), GatewayProbe("HTTP 403", true, true))
-+        assertEquals(85, stalled.score)
-+        assertFalse(stalled.gatewayWarning)
-+    }
-+
-+    @Test fun reconnectAndDeadlineAreNotWarmSamplesOrLoss() {
-+        val replaced = burst.toMutableList().apply { this[2] = QualityProbe(900.0) }
-+        assertEquals(100, ConnectionQuality.evaluate(cold, replaced, stream, gateway).score)
-+        val unknown = burst.toMutableList().apply { this[4] = QualityProbe(incomplete = true) }
-+        assertNull(ConnectionQuality.evaluate(cold, unknown, stream, gateway).score)
-+        assertNull(ConnectionQuality.evaluate(cold, burst, StreamProbe("лимит", null), gateway).score)
-+        assertNull(ConnectionQuality.evaluate(cold, List(5) { QualityProbe(80.0) }, stream, gateway).score)
-+    }
-+
-+    @Test fun allTimedOutAndContradictoryReachability() {
-+        val timeout = QualityProbe(timeout = true)
-+        val failed = StreamProbe("обрыв", 15)
-+        assertEquals(0, ConnectionQuality.evaluate(timeout, List(5) { timeout }, failed, GatewayProbe("таймаут")).score)
-+        assertEquals(1, ConnectionQuality.evaluate(timeout, List(5) { timeout }, failed, gateway).score)
-+    }
-+
-+    @Test fun latencyAndHandshakeBoundaries() {
-+        fun score(ms: Double, start: Double) = ConnectionQuality.evaluate(
-+            QualityProbe(start), List(5) { QualityProbe(ms, true) }, stream, gateway).score
-+        assertEquals(100, score(85.0, 160.0))
-+        assertEquals(65, score(350.0, 2100.0))
-+        assertEquals(85, score(80.0, 480.0))
-+        assertEquals(100, score(10.0, 160.0))
 +    }
 +}
 diff --git a/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt b/app/src/test/java/io/nekohasekai/sagernet/bg/tproxy/TProxyRoutesTest.kt
@@ -14797,7 +15161,7 @@ index 354bad0..5da7f53 100644
                      .replace("-oss", "")
              }
 diff --git a/nb4a.properties b/nb4a.properties
-index 751051e..041a720 100644
+index 751051e..83f085d 100644
 --- a/nb4a.properties
 +++ b/nb4a.properties
 @@ -1,4 +1,4 @@
@@ -14805,8 +15169,8 @@ index 751051e..041a720 100644
 -VERSION_NAME=2.0.7
 -VERSION_CODE=113
 +PACKAGE_NAME=com.nb4a.throne.quality
-+VERSION_NAME=2.0.7-quality.21
-+VERSION_CODE=134
++VERSION_NAME=2.0.7-quality.22
++VERSION_CODE=135
  THRONE_CORE_REF=e363c6eca17dd7aeb9062f3de0a961becf21ad6c
 \ No newline at end of file
 diff --git a/openspec/specs/app-widgets/spec.md b/openspec/specs/app-widgets/spec.md

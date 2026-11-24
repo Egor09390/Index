@@ -81,6 +81,7 @@ dependencies {
     implementation("com.jakewharton:process-phoenix:2.1.2")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.0.0-alpha.3")
     testImplementation("org.json:json:20231013")
 
     implementation("com.simplecityapps:recyclerview-fastscroll:2.0.1") {
