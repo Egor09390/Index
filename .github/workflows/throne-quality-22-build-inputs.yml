@@ -1,0 +1,28 @@
+name: Prepare pinned native inputs for local quality.22 build
+on:
+  push:
+    branches: [throne-quality-22-build-inputs]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Restore the Android source tree
+        run: |
+          set -euo pipefail
+          cp Throne-connection-quality.patch Throne-russian-default.patch "$RUNNER_TEMP/"
+          git fetch --depth 1 https://github.com/throneproj/ThroneForAndroid.git 0f3c1ca18e8af5b437d95aa0b0f36d1d5eedab51
+          git switch --detach FETCH_HEAD
+          git apply "$RUNNER_TEMP/Throne-connection-quality.patch" "$RUNNER_TEMP/Throne-russian-default.patch"
+      - uses: ./.github/actions/throne-core
+      - uses: ./.github/actions/routeprofiles
+      - uses: actions/upload-artifact@v7
+        with:
+          name: quality22-local-inputs
+          retention-days: 3
+          path: |
+            app/libs/ThroneCore.aar
+            app/src/main/assets/schema/sing-box.json
+            app/src/main/assets/routeprofiles/
