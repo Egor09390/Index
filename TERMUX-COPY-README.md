@@ -16,4 +16,4 @@ Tap the white arrow at the upper left to open the sessions menu. The list shows 
 
 **ABI target:** only `arm64-v8a` is enabled in the patched app/build.gradle; universal, arm32, x86 and x86_64 outputs are disabled. Intended for 64-bit ARM devices such as Galaxy S23. The existing Termux app on the phone cannot be updated with this build if Android rejects its different APK signing certificate. Installing this build does not transfer root access or data automatically.
 
-The default toolbar spreads `CTRL`, `COPY` and `FULL` evenly across one row in a monospace font. Swipe up on `FULL` for the `TXT` action.
+The default toolbar shows `CTRL`, `COPY` and `FULL` in equal-width columns, using [Geist Pixel Square](https://github.com/vercel/geist-font/tree/v1.9.2/fonts/GeistPixel). Its SIL Open Font License is bundled in the APK. Swipe up on `FULL` for the `TXT` action.
