@@ -52,5 +52,5 @@ jobs:
           gh release create "$tag" termux-src/app/build/outputs/apk/debug/*_arm64-v8a.apk \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Termux COPY/FULL ARM64-v8a build ${{ github.run_number }}" \
-            --notes "Unofficial Android 7+ arm64-v8a debug APK. FULL saves long transcripts in Downloads as a complete .txt file and copies them in parts. COPY leaves the clipboard alone after empty output. Feedback appears in the Termux header. The toolbar uses three evenly spaced monospace keys. The white arrow opens a numbered sessions list with a bin on every row. Different APK signatures may prevent installing over an existing Termux." \
+            --notes "Unofficial Android 7+ arm64-v8a debug APK. FULL saves long transcripts in Downloads as a complete .txt file and copies them in parts. COPY leaves the clipboard alone after empty output. Feedback appears in the Termux header. The toolbar uses three evenly spaced monospace keys with their labels slightly left of center. The white arrow opens a numbered sessions list with a bin on every row. Different APK signatures may prevent installing over an existing Termux." \
             --prerelease
