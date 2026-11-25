@@ -134,11 +134,14 @@ index 0000000..5e83a47
 +FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 +OTHER DEALINGS IN THE FONT SOFTWARE.
 diff --git a/app/src/main/java/com/termux/app/TermuxActivity.java b/app/src/main/java/com/termux/app/TermuxActivity.java
-index 0c9f741..7ec4f74 100644
+index 0c9f741..0e24d6b 100644
 --- a/app/src/main/java/com/termux/app/TermuxActivity.java
 +++ b/app/src/main/java/com/termux/app/TermuxActivity.java
-@@ -24,7 +24,7 @@ import android.widget.EditText;
- import android.widget.ImageButton;
+@@ -21,10 +21,9 @@ import android.view.View;
+ import android.view.ViewGroup;
+ import android.view.WindowManager;
+ import android.widget.EditText;
+-import android.widget.ImageButton;
  import android.widget.ListView;
  import android.widget.RelativeLayout;
 -import android.widget.Toast;
@@ -146,7 +149,7 @@ index 0c9f741..7ec4f74 100644
  
  import com.termux.R;
  import com.termux.app.api.file.FileReceiverActivity;
-@@ -47,7 +47,6 @@ import com.termux.app.terminal.TermuxSessionsListViewController;
+@@ -47,7 +46,6 @@ import com.termux.app.terminal.TermuxSessionsListViewController;
  import com.termux.app.terminal.io.TerminalToolbarViewPager;
  import com.termux.app.terminal.TermuxTerminalViewClient;
  import com.termux.shared.termux.extrakeys.ExtraKeysView;
@@ -154,7 +157,7 @@ index 0c9f741..7ec4f74 100644
  import com.termux.shared.logger.Logger;
  import com.termux.shared.termux.TermuxUtils;
  import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
-@@ -143,10 +142,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -143,10 +141,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
       */
      private final BroadcastReceiver mTermuxActivityBroadcastReceiver = new TermuxActivityBroadcastReceiver();
  
@@ -167,7 +170,7 @@ index 0c9f741..7ec4f74 100644
  
      /**
       * If between onResume() and onStop(). Note that only one session is in the foreground of the terminal view at the
-@@ -214,6 +211,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -214,6 +210,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
          super.onCreate(savedInstanceState);
  
          setContentView(R.layout.activity_termux);
@@ -175,17 +178,22 @@ index 0c9f741..7ec4f74 100644
  
          // Load termux shared preferences
          // This will also fail if TermuxConstants.TERMUX_PACKAGE_NAME does not equal applicationId
-@@ -245,6 +243,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -245,12 +242,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
  
          setTerminalToolbarView(savedInstanceState);
  
+-        setSettingsButtonView();
 +        findViewById(R.id.open_sessions_drawer_button).setOnClickListener(v ->
 +            getDrawer().openDrawer(findViewById(R.id.left_drawer)));
-+
-         setSettingsButtonView();
  
          setNewSessionButtonView();
-@@ -266,7 +267,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+ 
+-        setToggleKeyboardView();
+-
+         registerForContextMenu(mTerminalView);
+ 
+         FileReceiverActivity.updateFileReceiverActivityComponentsState(this);
+@@ -266,7 +262,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                  throw new RuntimeException("bindService() failed");
          } catch (Exception e) {
              Logger.logStackTraceWithMessage(LOG_TAG,"TermuxActivity failed to start TermuxService", e);
@@ -194,7 +202,7 @@ index 0c9f741..7ec4f74 100644
                  getString(e.getMessage() != null && e.getMessage().contains("app is in background") ?
                      R.string.error_termux_service_start_failed_bg : R.string.error_termux_service_start_failed_general),
                  true);
-@@ -328,6 +329,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -328,6 +324,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
  
          Logger.logDebug(LOG_TAG, "onStop");
  
@@ -205,7 +213,7 @@ index 0c9f741..7ec4f74 100644
          if (mIsInvalidState) return;
  
          mIsVisible = false;
-@@ -543,7 +548,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -543,7 +543,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
          if (terminalToolbarViewPager == null) return;
  
          final boolean showNow = mPreferences.toogleShowTerminalToolbar();
@@ -215,7 +223,18 @@ index 0c9f741..7ec4f74 100644
          terminalToolbarViewPager.setVisibility(showNow ? View.VISIBLE : View.GONE);
          if (showNow && isTerminalToolbarTextInputViewSelected()) {
              // Focus the text input view if just revealed.
-@@ -574,10 +580,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -563,41 +564,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+ 
+ 
+ 
+-    private void setSettingsButtonView() {
+-        ImageButton settingsButton = findViewById(R.id.settings_button);
+-        settingsButton.setOnClickListener(v -> {
+-            ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
+-        });
+-    }
+-
+     private void setNewSessionButtonView() {
          View newSessionButton = findViewById(R.id.new_session_button);
          newSessionButton.setOnClickListener(v -> mTermuxTerminalSessionActivityClient.addNewSession(false, null));
          newSessionButton.setOnLongClickListener(v -> {
@@ -230,7 +249,27 @@ index 0c9f741..7ec4f74 100644
              return true;
          });
      }
-@@ -615,13 +621,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+ 
+-    private void setToggleKeyboardView() {
+-        findViewById(R.id.toggle_keyboard_button).setOnClickListener(v -> {
+-            mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
+-            getDrawer().closeDrawers();
+-        });
+-
+-        findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
+-            toggleTerminalToolbar();
+-            return true;
+-        });
+-    }
+-
+-
+-
+-
+-
+     @SuppressLint("RtlHardcoded")
+     @Override
+     public void onBackPressed() {
+@@ -615,13 +593,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
          }
      }
  
@@ -252,7 +291,7 @@ index 0c9f741..7ec4f74 100644
      }
  
  
-@@ -727,7 +734,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -727,7 +706,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      private void onResetTerminalSession(TerminalSession session) {
          if (session != null) {
              session.reset();
@@ -261,7 +300,7 @@ index 0c9f741..7ec4f74 100644
  
              if (mTermuxTerminalSessionActivityClient != null)
                  mTermuxTerminalSessionActivityClient.onResetTerminalSession();
-@@ -773,18 +780,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -773,18 +752,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                  int requestCode = isPermissionCallback ? -1 : PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION;
  
                  // If permission is granted, then also setup storage symlinks.
@@ -669,7 +708,7 @@ index bd78914..7c7d227 100644
          try {
              File colorsFile = TermuxConstants.TERMUX_COLOR_PROPERTIES_FILE;
 diff --git a/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java b/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
-index 700c5e5..ac03afe 100644
+index 700c5e5..0e4bb0d 100644
 --- a/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
 +++ b/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
 @@ -4,9 +4,11 @@ import android.annotation.SuppressLint;
@@ -748,7 +787,17 @@ index 700c5e5..ac03afe 100644
                          }
                      }
                  }
-@@ -741,7 +751,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+@@ -524,8 +534,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+ 
+ 
+     /**
+-     * Called when user requests the soft keyboard to be toggled via "KEYBOARD" toggle button in
+-     * drawer or extra keys, or with ctrl+alt+k hardware keyboard shortcut.
++     * Called when the extra keys or Ctrl+Alt+K shortcut request a soft keyboard toggle.
+      */
+     public void onToggleSoftKeyboardRequest() {
+         // If soft keyboard toggle behaviour is enable/disabled
+@@ -741,7 +750,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
      }
  
      private void reportIssueFromTranscript(String transcriptText, boolean addTermuxDebugInfo) {
@@ -2040,10 +2089,16 @@ literal 0
 HcmV?d00001
 
 diff --git a/app/src/main/res/layout/activity_termux.xml b/app/src/main/res/layout/activity_termux.xml
-index 831ea7c..38db2ee 100644
+index 831ea7c..bae2a20 100644
 --- a/app/src/main/res/layout/activity_termux.xml
 +++ b/app/src/main/res/layout/activity_termux.xml
-@@ -23,27 +23,71 @@
+@@ -1,5 +1,4 @@
+ <com.termux.app.terminal.TermuxActivityRootView xmlns:android="http://schemas.android.com/apk/res/android"
+-    xmlns:app="http://schemas.android.com/apk/res-auto"
+     xmlns:tools="http://schemas.android.com/tools"
+     android:id="@+id/activity_termux_root_view"
+     android:layout_width="match_parent"
+@@ -23,41 +22,71 @@
              android:layout_above="@+id/terminal_toolbar_view_pager"
              android:layout_height="match_parent">
  
@@ -2119,11 +2174,60 @@ index 831ea7c..38db2ee 100644
                  android:descendantFocusability="blocksDescendants"
                  android:orientation="vertical"
 -                android:background="?attr/termuxActivityDrawerBackground">
+-
+-                <LinearLayout
+-                    android:layout_width="match_parent"
+-                    android:layout_height="wrap_content"
+-                    android:orientation="horizontal">
+-                    <ImageButton
+-                        android:id="@+id/settings_button"
+-                        android:layout_width="40dp"
+-                        android:layout_height="40dp"
+-                        android:src="@drawable/ic_settings"
+-                        android:background="@null"
+-                        android:contentDescription="@string/action_open_settings"
+-                        app:tint="?attr/termuxActivityDrawerImageTint" />
+-                </LinearLayout>
 +                android:background="?attr/termuxActivityDrawerBackground"
 +                tools:ignore="RtlHardcoded">
  
-                 <LinearLayout
-                     android:layout_width="match_parent"
+                 <ListView
+                     android:id="@+id/terminal_sessions_list"
+@@ -68,28 +97,13 @@
+                     android:choiceMode="singleChoice"
+                     android:longClickable="true" />
+ 
+-                <LinearLayout
+-                    style="?android:attr/buttonBarStyle"
+-                    android:layout_width="match_parent"
++                <com.google.android.material.button.MaterialButton
++                    android:id="@+id/new_session_button"
++                    style="?android:attr/buttonBarButtonStyle"
++                    android:layout_width="wrap_content"
+                     android:layout_height="wrap_content"
+-                    android:orientation="horizontal">
+-
+-                    <com.google.android.material.button.MaterialButton
+-                        android:id="@+id/toggle_keyboard_button"
+-                        style="?android:attr/buttonBarButtonStyle"
+-                        android:layout_width="match_parent"
+-                        android:layout_height="wrap_content"
+-                        android:layout_weight="1"
+-                        android:text="@string/action_toggle_soft_keyboard" />
+-
+-                    <com.google.android.material.button.MaterialButton
+-                        android:id="@+id/new_session_button"
+-                        style="?android:attr/buttonBarButtonStyle"
+-                        android:layout_width="match_parent"
+-                        android:layout_height="wrap_content"
+-                        android:layout_weight="1"
+-                        android:text="@string/action_new_session" />
+-                </LinearLayout>
++                    android:layout_gravity="center_horizontal"
++                    android:text="@string/action_new_session" />
+             </LinearLayout>
+ 
+         </androidx.drawerlayout.widget.DrawerLayout>
 diff --git a/app/src/main/res/layout/dialog_delete_session.xml b/app/src/main/res/layout/dialog_delete_session.xml
 new file mode 100644
 index 0000000..3418b94
