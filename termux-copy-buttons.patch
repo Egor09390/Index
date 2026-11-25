@@ -35,10 +35,48 @@ index 1d0dfe1..f42e2ec 100644
          <receiver
              android:name=".app.TermuxOpenReceiver"
 diff --git a/app/src/main/java/com/termux/app/TermuxActivity.java b/app/src/main/java/com/termux/app/TermuxActivity.java
-index 0c9f741..250cf0b 100644
+index 0c9f741..7ec4f74 100644
 --- a/app/src/main/java/com/termux/app/TermuxActivity.java
 +++ b/app/src/main/java/com/termux/app/TermuxActivity.java
-@@ -245,6 +245,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+@@ -24,7 +24,7 @@ import android.widget.EditText;
+ import android.widget.ImageButton;
+ import android.widget.ListView;
+ import android.widget.RelativeLayout;
+-import android.widget.Toast;
++import android.widget.TextView;
+ 
+ import com.termux.R;
+ import com.termux.app.api.file.FileReceiverActivity;
+@@ -47,7 +47,6 @@ import com.termux.app.terminal.TermuxSessionsListViewController;
+ import com.termux.app.terminal.io.TerminalToolbarViewPager;
+ import com.termux.app.terminal.TermuxTerminalViewClient;
+ import com.termux.shared.termux.extrakeys.ExtraKeysView;
+-import com.termux.shared.termux.interact.TextInputDialogUtils;
+ import com.termux.shared.logger.Logger;
+ import com.termux.shared.termux.TermuxUtils;
+ import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
+@@ -143,10 +142,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+      */
+     private final BroadcastReceiver mTermuxActivityBroadcastReceiver = new TermuxActivityBroadcastReceiver();
+ 
+-    /**
+-     * The last toast shown, used cancel current toast before showing new in {@link #showToast(String, boolean)}.
+-     */
+-    Toast mLastToast;
++    private TextView mTerminalStatusMessage;
++    private final Runnable mHideTerminalStatus = () -> mTerminalStatusMessage.setVisibility(View.INVISIBLE);
+ 
+     /**
+      * If between onResume() and onStop(). Note that only one session is in the foreground of the terminal view at the
+@@ -214,6 +211,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+         super.onCreate(savedInstanceState);
+ 
+         setContentView(R.layout.activity_termux);
++        mTerminalStatusMessage = findViewById(R.id.terminal_status_message);
+ 
+         // Load termux shared preferences
+         // This will also fail if TermuxConstants.TERMUX_PACKAGE_NAME does not equal applicationId
+@@ -245,6 +243,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
  
          setTerminalToolbarView(savedInstanceState);
  
@@ -48,27 +86,194 @@ index 0c9f741..250cf0b 100644
          setSettingsButtonView();
  
          setNewSessionButtonView();
+@@ -266,7 +267,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+                 throw new RuntimeException("bindService() failed");
+         } catch (Exception e) {
+             Logger.logStackTraceWithMessage(LOG_TAG,"TermuxActivity failed to start TermuxService", e);
+-            Logger.showToast(this,
++            showTerminalStatus(
+                 getString(e.getMessage() != null && e.getMessage().contains("app is in background") ?
+                     R.string.error_termux_service_start_failed_bg : R.string.error_termux_service_start_failed_general),
+                 true);
+@@ -328,6 +329,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+ 
+         Logger.logDebug(LOG_TAG, "onStop");
+ 
++        if (mTerminalStatusMessage != null) {
++            mTerminalStatusMessage.removeCallbacks(mHideTerminalStatus);
++            mHideTerminalStatus.run();
++        }
+         if (mIsInvalidState) return;
+ 
+         mIsVisible = false;
+@@ -543,7 +548,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+         if (terminalToolbarViewPager == null) return;
+ 
+         final boolean showNow = mPreferences.toogleShowTerminalToolbar();
+-        Logger.showToast(this, (showNow ? getString(R.string.msg_enabling_terminal_toolbar) : getString(R.string.msg_disabling_terminal_toolbar)), true);
++        showTerminalStatus(getString(showNow ? R.string.msg_enabling_terminal_toolbar
++            : R.string.msg_disabling_terminal_toolbar), true);
+         terminalToolbarViewPager.setVisibility(showNow ? View.VISIBLE : View.GONE);
+         if (showNow && isTerminalToolbarTextInputViewSelected()) {
+             // Focus the text input view if just revealed.
+@@ -574,10 +580,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+         View newSessionButton = findViewById(R.id.new_session_button);
+         newSessionButton.setOnClickListener(v -> mTermuxTerminalSessionActivityClient.addNewSession(false, null));
+         newSessionButton.setOnLongClickListener(v -> {
+-            TextInputDialogUtils.textInput(TermuxActivity.this, R.string.title_create_named_session, null,
+-                R.string.action_create_named_session_confirm, text -> mTermuxTerminalSessionActivityClient.addNewSession(false, text),
+-                R.string.action_new_session_failsafe, text -> mTermuxTerminalSessionActivityClient.addNewSession(true, text),
+-                -1, null, null);
++            new AlertDialog.Builder(this)
++                .setItems(new CharSequence[]{getString(R.string.action_new_session_failsafe)},
++                    (dialog, which) -> mTermuxTerminalSessionActivityClient.addNewSession(true, null))
++                .show();
+             return true;
+         });
+     }
+@@ -615,13 +621,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+         }
+     }
+ 
+-    /** Show a toast and dismiss the last one if still visible. */
+-    public void showToast(String text, boolean longDuration) {
+-        if (text == null || text.isEmpty()) return;
+-        if (mLastToast != null) mLastToast.cancel();
+-        mLastToast = Toast.makeText(TermuxActivity.this, text, longDuration ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT);
+-        mLastToast.setGravity(Gravity.TOP, 0, 0);
+-        mLastToast.show();
++    /** Display feedback in the terminal header. */
++    public void showTerminalStatus(String text, boolean longDuration) {
++        if (mTerminalStatusMessage == null || isFinishing() || isDestroyed()
++                || text == null || text.isEmpty()) return;
++        mTerminalStatusMessage.removeCallbacks(mHideTerminalStatus);
++        mTerminalStatusMessage.setText(text);
++        mTerminalStatusMessage.setVisibility(View.VISIBLE);
++        mTerminalStatusMessage.postDelayed(mHideTerminalStatus, longDuration ? 4000 : 2000);
+     }
+ 
+ 
+@@ -727,7 +734,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+     private void onResetTerminalSession(TerminalSession session) {
+         if (session != null) {
+             session.reset();
+-            showToast(getResources().getString(R.string.msg_terminal_reset), true);
++            showTerminalStatus(getString(R.string.msg_terminal_reset), true);
+ 
+             if (mTermuxTerminalSessionActivityClient != null)
+                 mTermuxTerminalSessionActivityClient.onResetTerminalSession();
+@@ -773,18 +780,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+                 int requestCode = isPermissionCallback ? -1 : PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION;
+ 
+                 // If permission is granted, then also setup storage symlinks.
+-                if(PermissionUtils.checkAndRequestLegacyOrManageExternalStoragePermission(
+-                    TermuxActivity.this, requestCode, !isPermissionCallback)) {
+-                    if (isPermissionCallback)
+-                        Logger.logInfoAndShowToast(TermuxActivity.this, LOG_TAG,
+-                            getString(com.termux.shared.R.string.msg_storage_permission_granted_on_request));
+-
+-                    TermuxInstaller.setupStorageSymlinks(TermuxActivity.this);
+-                } else {
+-                    if (isPermissionCallback)
+-                        Logger.logInfoAndShowToast(TermuxActivity.this, LOG_TAG,
+-                            getString(com.termux.shared.R.string.msg_storage_permission_not_granted_on_request));
++                boolean granted = PermissionUtils.checkAndRequestLegacyOrManageExternalStoragePermission(
++                    TermuxActivity.this, requestCode, false);
++                if (isPermissionCallback) {
++                    runOnUiThread(() -> showTerminalStatus(getString(granted
++                        ? com.termux.shared.R.string.msg_storage_permission_granted_on_request
++                        : com.termux.shared.R.string.msg_storage_permission_not_granted_on_request), true));
+                 }
++                if (granted)
++                    TermuxInstaller.setupStorageSymlinks(TermuxActivity.this);
+             }
+         }.start();
+     }
+diff --git a/app/src/main/java/com/termux/app/TermuxInstaller.java b/app/src/main/java/com/termux/app/TermuxInstaller.java
+index b141499..20eed38 100644
+--- a/app/src/main/java/com/termux/app/TermuxInstaller.java
++++ b/app/src/main/java/com/termux/app/TermuxInstaller.java
+@@ -3,7 +3,6 @@ package com.termux.app;
+ import android.app.Activity;
+ import android.app.AlertDialog;
+ import android.app.ProgressDialog;
+-import android.content.Context;
+ import android.os.Build;
+ import android.os.Environment;
+ import android.system.Os;
+@@ -274,7 +273,7 @@ final class TermuxInstaller {
+             true, false, TermuxUtils.AppInfoMode.TERMUX_AND_PLUGIN_PACKAGES, true);
+     }
+ 
+-    static void setupStorageSymlinks(final Context context) {
++    static void setupStorageSymlinks(final TermuxActivity context) {
+         final String LOG_TAG = "termux-storage";
+         final String title = TermuxConstants.TERMUX_APP_NAME + " Setup Storage Error";
+ 
+@@ -288,7 +287,7 @@ final class TermuxInstaller {
+ 
+                     error = FileUtils.clearDirectory("~/storage", storageDir.getAbsolutePath());
+                     if (error != null) {
+-                        Logger.logErrorAndShowToast(context, LOG_TAG, error.getMessage());
++                        context.runOnUiThread(() -> context.showTerminalStatus(error.getMessage(), true));
+                         Logger.logErrorExtended(LOG_TAG, "Setup Storage Error\n" + error.toString());
+                         TermuxCrashUtils.sendCrashReportNotification(context, LOG_TAG, title, null,
+                             "## " + title + "\n\n" + Error.getErrorMarkdownString(error),
+@@ -361,7 +360,7 @@ final class TermuxInstaller {
+ 
+                     Logger.logInfo(LOG_TAG, "Storage symlinks created successfully.");
+                 } catch (Exception e) {
+-                    Logger.logErrorAndShowToast(context, LOG_TAG, e.getMessage());
++                    context.runOnUiThread(() -> context.showTerminalStatus(e.getMessage(), true));
+                     Logger.logStackTraceWithMessage(LOG_TAG, "Setup Storage Error: Error setting up link", e);
+                     TermuxCrashUtils.sendCrashReportNotification(context, LOG_TAG, title, null,
+                         "## " + title + "\n\n" + Logger.getStackTracesMarkdownString(null, Logger.getStackTracesStringArray(e)),
+diff --git a/app/src/main/java/com/termux/app/TermuxService.java b/app/src/main/java/com/termux/app/TermuxService.java
+index 8025d0b..faf74bf 100644
+--- a/app/src/main/java/com/termux/app/TermuxService.java
++++ b/app/src/main/java/com/termux/app/TermuxService.java
+@@ -719,11 +719,6 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
+         // show in Termux notification but will not run until user manually clicks the notification.
+         if (PermissionUtils.validateDisplayOverOtherAppsPermissionForPostAndroid10(this, true)) {
+             TermuxActivity.startTermuxActivity(this);
+-        } else {
+-            TermuxAppSharedPreferences preferences = TermuxAppSharedPreferences.build(this);
+-            if (preferences == null) return;
+-            if (preferences.arePluginErrorNotificationsEnabled(false))
+-                Logger.showToast(this, this.getString(R.string.error_display_over_other_apps_permission_not_granted_to_start_terminal), true);
+         }
+     }
+ 
 diff --git a/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java b/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java
-index bf914b9..28519bb 100644
+index bf914b9..6b8ce6f 100644
 --- a/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java
 +++ b/app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java
-@@ -1,6 +1,7 @@
+@@ -1,28 +1,25 @@
  package com.termux.app.terminal;
  
- import android.annotation.SuppressLint;
+-import android.annotation.SuppressLint;
 +import android.app.Dialog;
  import android.graphics.Color;
  import android.graphics.Paint;
- import android.graphics.Typeface;
-@@ -11,6 +12,7 @@ import android.text.style.StyleSpan;
+-import android.graphics.Typeface;
+-import android.text.SpannableString;
+-import android.text.Spanned;
+-import android.text.TextUtils;
+-import android.text.style.StyleSpan;
  import android.view.LayoutInflater;
  import android.view.View;
  import android.view.ViewGroup;
 +import android.view.Window;
  import android.widget.AdapterView;
  import android.widget.ArrayAdapter;
++import android.widget.ImageButton;
  import android.widget.TextView;
-@@ -23,6 +25,7 @@ import com.termux.app.TermuxActivity;
+ 
+ import androidx.annotation.NonNull;
+-import androidx.core.content.ContextCompat;
+ 
+ import com.termux.R;
+ import com.termux.app.TermuxActivity;
  import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
  import com.termux.shared.theme.NightMode;
  import com.termux.shared.theme.ThemeUtils;
@@ -76,7 +281,94 @@ index bf914b9..28519bb 100644
  import com.termux.terminal.TerminalSession;
  
  import java.util.List;
-@@ -101,8 +104,21 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
+@@ -31,15 +28,11 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
+ 
+     final TermuxActivity mActivity;
+ 
+-    final StyleSpan boldSpan = new StyleSpan(Typeface.BOLD);
+-    final StyleSpan italicSpan = new StyleSpan(Typeface.ITALIC);
+-
+     public TermuxSessionsListViewController(TermuxActivity activity, List<TermuxSession> sessionList) {
+         super(activity.getApplicationContext(), R.layout.item_terminal_sessions_list, sessionList);
+         this.mActivity = activity;
+     }
+ 
+-    @SuppressLint("SetTextI18n")
+     @NonNull
+     @Override
+     public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+@@ -49,60 +42,55 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
+             sessionRowView = inflater.inflate(R.layout.item_terminal_sessions_list, parent, false);
+         }
+ 
+-        TextView sessionTitleView = sessionRowView.findViewById(R.id.session_title);
+-
+-        TerminalSession sessionAtRow = getItem(position).getTerminalSession();
+-        if (sessionAtRow == null) {
+-            sessionTitleView.setText("null session");
+-            return sessionRowView;
+-        }
++        TextView sessionNumberView = sessionRowView.findViewById(R.id.session_number);
++        ImageButton deleteButton = sessionRowView.findViewById(R.id.delete_session_icon);
++        TermuxSession entry = getItem(position);
++        TerminalSession sessionAtRow = entry == null ? null : entry.getTerminalSession();
++        int number = position + 1;
++        sessionNumberView.setText(String.valueOf(number));
++        deleteButton.setContentDescription(mActivity.getString(R.string.action_delete_session_number, number));
++        deleteButton.setEnabled(sessionAtRow != null);
++        deleteButton.setOnClickListener(sessionAtRow == null ? null
++            : v -> mActivity.getTermuxTerminalSessionClient().deleteSession(sessionAtRow));
+ 
+         boolean shouldEnableDarkTheme = ThemeUtils.shouldEnableDarkTheme(mActivity, NightMode.getAppNightMode().getName());
+-
+-        if (shouldEnableDarkTheme) {
+-            sessionTitleView.setBackground(
+-                ContextCompat.getDrawable(mActivity, R.drawable.session_background_black_selected)
+-            );
+-        }
+-
+-        String name = sessionAtRow.mSessionName;
+-        String sessionTitle = sessionAtRow.getTitle();
+-
+-        String numberPart = "[" + (position + 1) + "] ";
+-        String sessionNamePart = (TextUtils.isEmpty(name) ? "" : name);
+-        String sessionTitlePart = (TextUtils.isEmpty(sessionTitle) ? "" : ((sessionNamePart.isEmpty() ? "" : "\n") + sessionTitle));
+-
+-        String fullSessionTitle = numberPart + sessionNamePart + sessionTitlePart;
+-        SpannableString fullSessionTitleStyled = new SpannableString(fullSessionTitle);
+-        fullSessionTitleStyled.setSpan(boldSpan, 0, numberPart.length() + sessionNamePart.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+-        fullSessionTitleStyled.setSpan(italicSpan, numberPart.length() + sessionNamePart.length(), fullSessionTitle.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+-
+-        sessionTitleView.setText(fullSessionTitleStyled);
+-
+-        boolean sessionRunning = sessionAtRow.isRunning();
+-
+-        if (sessionRunning) {
+-            sessionTitleView.setPaintFlags(sessionTitleView.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG);
+-        } else {
+-            sessionTitleView.setPaintFlags(sessionTitleView.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
+-        }
++        sessionRowView.setBackgroundResource(shouldEnableDarkTheme
++            ? R.drawable.session_background_black_selected : R.drawable.session_background_selected);
++        boolean sessionFinished = sessionAtRow != null && !sessionAtRow.isRunning();
++        int paintFlags = sessionNumberView.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG;
++        if (sessionFinished) paintFlags |= Paint.STRIKE_THRU_TEXT_FLAG;
++        sessionNumberView.setPaintFlags(paintFlags);
+         int defaultColor = shouldEnableDarkTheme ? Color.WHITE : Color.BLACK;
+-        int color = sessionRunning || sessionAtRow.getExitStatus() == 0 ? defaultColor : Color.RED;
+-        sessionTitleView.setTextColor(color);
++        sessionNumberView.setTextColor(sessionFinished && sessionAtRow.getExitStatus() != 0
++            ? Color.RED : defaultColor);
+         return sessionRowView;
+     }
+ 
+     @Override
+     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+         TermuxSession clickedSession = getItem(position);
++        if (clickedSession == null) return;
+         mActivity.getTermuxTerminalSessionClient().setCurrentSession(clickedSession.getTerminalSession());
+         mActivity.getDrawer().closeDrawers();
+     }
  
      @Override
      public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
@@ -101,10 +393,54 @@ index bf914b9..28519bb 100644
      }
  
 diff --git a/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java b/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java
-index bd78914..ccfdafa 100644
+index bd78914..7c7d227 100644
 --- a/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java
 +++ b/app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java
-@@ -146,6 +146,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+@@ -1,6 +1,5 @@
+ package com.termux.app.terminal;
+ 
+-import android.annotation.SuppressLint;
+ import android.app.Activity;
+ import android.app.AlertDialog;
+ import android.content.ClipData;
+@@ -10,7 +9,6 @@ import android.content.pm.PackageManager;
+ import android.graphics.Typeface;
+ import android.media.AudioAttributes;
+ import android.media.SoundPool;
+-import android.text.TextUtils;
+ import android.widget.ListView;
+ 
+ import androidx.annotation.NonNull;
+@@ -19,7 +17,6 @@ import androidx.annotation.Nullable;
+ import com.termux.R;
+ import com.termux.shared.interact.ShareUtils;
+ import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
+-import com.termux.shared.termux.interact.TextInputDialogUtils;
+ import com.termux.app.TermuxActivity;
+ import com.termux.shared.termux.terminal.TermuxTerminalSessionClientBase;
+ import com.termux.shared.termux.TermuxConstants;
+@@ -121,20 +118,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+         if (mActivity.getCurrentSession() == changedSession) mActivity.getTerminalView().onScreenUpdated();
+     }
+ 
+-    @Override
+-    public void onTitleChanged(@NonNull TerminalSession updatedSession) {
+-        if (!mActivity.isVisible()) return;
+-
+-        if (updatedSession != mActivity.getCurrentSession()) {
+-            // Only show toast for other sessions than the current one, since the user
+-            // probably consciously caused the title change to change in the current session
+-            // and don't want an annoying toast for that.
+-            mActivity.showToast(toToastTitle(updatedSession), true);
+-        }
+-
+-        termuxSessionListNotifyUpdated();
+-    }
+-
+     @Override
+     public void onSessionFinished(@NonNull TerminalSession finishedSession) {
+         TermuxService service = mActivity.getTermuxService();
+@@ -146,6 +129,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
          }
  
          int index = service.getIndexOfSession(finishedSession);
@@ -112,24 +448,72 @@ index bd78914..ccfdafa 100644
  
          // For plugin commands that expect the result back, we should immediately close the session
          // and send the result back instead of waiting fo the user to press enter.
-@@ -160,9 +161,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+@@ -159,10 +143,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+         }
  
          if (mActivity.isVisible() && finishedSession != mActivity.getCurrentSession()) {
-             // Show toast for non-current sessions that exit.
+-            // Show toast for non-current sessions that exit.
 -            // Verify that session was not removed before we got told about it finishing:
 -            if (index >= 0)
 -                mActivity.showToast(toToastTitle(finishedSession) + " - exited", true);
-+            mActivity.showToast(toToastTitle(finishedSession) + " - exited", true);
++            mActivity.showTerminalStatus(mActivity.getString(R.string.msg_numbered_session_exited, index + 1), true);
          }
  
          if (mActivity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-@@ -436,7 +435,34 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+@@ -305,12 +286,12 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+     }
+ 
+     void notifyOfSessionChange() {
+-        if (!mActivity.isVisible()) return;
+-
+-        if (!mActivity.getProperties().areTerminalSessionChangeToastsDisabled()) {
+-            TerminalSession session = mActivity.getCurrentSession();
+-            mActivity.showToast(toToastTitle(session), false);
+-        }
++        if (!mActivity.isVisible() || mActivity.getProperties().areTerminalSessionChangeToastsDisabled()) return;
++        TermuxService service = mActivity.getTermuxService();
++        if (service == null) return;
++        int index = service.getIndexOfSession(mActivity.getCurrentSession());
++        if (index >= 0)
++            mActivity.showTerminalStatus(mActivity.getString(R.string.msg_numbered_session, index + 1), false);
+     }
+ 
+     public void switchToSession(boolean forward) {
+@@ -340,27 +321,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+             setCurrentSession(termuxSession.getTerminalSession());
+     }
+ 
+-    @SuppressLint("InflateParams")
+-    public void renameSession(final TerminalSession sessionToRename) {
+-        if (sessionToRename == null) return;
+-
+-        TextInputDialogUtils.textInput(mActivity, R.string.title_rename_session, sessionToRename.mSessionName, R.string.action_rename_session_confirm, text -> {
+-            renameSession(sessionToRename, text);
+-            termuxSessionListNotifyUpdated();
+-        }, -1, null, -1, null, null);
+-    }
+-
+-    private void renameSession(TerminalSession sessionToRename, String text) {
+-        if (sessionToRename == null) return;
+-        sessionToRename.mSessionName = text;
+-        TermuxService service = mActivity.getTermuxService();
+-        if (service != null) {
+-            TermuxSession termuxSession = service.getTermuxSessionForTerminalSession(sessionToRename);
+-            if (termuxSession != null)
+-                termuxSession.getExecutionCommand().shellName = text;
+-        }
+-    }
+-
+     public void addNewSession(boolean isFailSafe, String sessionName) {
+         TermuxService service = mActivity.getTermuxService();
+         if (service == null) return;
+@@ -436,7 +396,34 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
          if (service == null) return;
  
          int index = service.removeTermuxSession(finishedSession);
 +        if (index >= 0) selectSessionAfterRemoval(service, index);
 +    }
-+
+ 
 +    void deleteSession(TerminalSession sessionToDelete) {
 +        TermuxService service = mActivity.getTermuxService();
 +        if (service == null) return;
@@ -153,13 +537,40 @@ index bd78914..ccfdafa 100644
 +            checkAndScrollToSession(currentSession);
 +        }
 +    }
- 
++
 +    private void selectSessionAfterRemoval(TermuxService service, int index) {
          int size = service.getTermuxSessionsSize();
          if (size == 0) {
              // There are no sessions to show, so finish the activity.
+@@ -471,26 +458,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
+     }
+ 
+ 
+-    String toToastTitle(TerminalSession session) {
+-        TermuxService service = mActivity.getTermuxService();
+-        if (service == null) return null;
+-
+-        final int indexOfSession = service.getIndexOfSession(session);
+-        if (indexOfSession < 0) return null;
+-        StringBuilder toastTitle = new StringBuilder("[" + (indexOfSession + 1) + "]");
+-        if (!TextUtils.isEmpty(session.mSessionName)) {
+-            toastTitle.append(" ").append(session.mSessionName);
+-        }
+-        String title = session.getTitle();
+-        if (!TextUtils.isEmpty(title)) {
+-            // Space to "[${NR}] or newline after session name:
+-            toastTitle.append(session.mSessionName == null ? " " : "\n");
+-            toastTitle.append(title);
+-        }
+-        return toastTitle.toString();
+-    }
+-
+-
+     public void checkForFontAndColors() {
+         try {
+             File colorsFile = TermuxConstants.TERMUX_COLOR_PROPERTIES_FILE;
 diff --git a/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java b/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
-index 700c5e5..00418d6 100644
+index 700c5e5..ac03afe 100644
 --- a/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
 +++ b/app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java
 @@ -4,9 +4,11 @@ import android.annotation.SuppressLint;
@@ -174,7 +585,15 @@ index 700c5e5..00418d6 100644
  import android.text.TextUtils;
  import android.view.Gravity;
  import android.view.InputDevice;
-@@ -32,6 +34,7 @@ import com.termux.shared.activities.ReportActivity;
+@@ -15,7 +17,6 @@ import android.view.MotionEvent;
+ import android.view.View;
+ import android.widget.EditText;
+ import android.widget.ListView;
+-import android.widget.Toast;
+ 
+ import com.termux.R;
+ import com.termux.app.TermuxActivity;
+@@ -32,6 +33,7 @@ import com.termux.shared.activities.ReportActivity;
  import com.termux.shared.models.ReportInfo;
  import com.termux.app.models.UserAction;
  import com.termux.app.terminal.io.KeyboardShortcut;
@@ -182,7 +601,7 @@ index 700c5e5..00418d6 100644
  import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
  import com.termux.shared.data.DataUtils;
  import com.termux.shared.logger.Logger;
-@@ -55,6 +58,8 @@ import androidx.drawerlayout.widget.DrawerLayout;
+@@ -55,6 +57,8 @@ import androidx.drawerlayout.widget.DrawerLayout;
  
  public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
  
@@ -191,7 +610,7 @@ index 700c5e5..00418d6 100644
      final TermuxActivity mActivity;
  
      final TermuxTerminalSessionActivityClient mTermuxTerminalSessionActivityClient;
-@@ -213,7 +218,18 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+@@ -213,7 +217,18 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
  
      @Override
      public boolean shouldEnforceCharBasedInput() {
@@ -211,6 +630,34 @@ index 700c5e5..00418d6 100644
      }
  
      @Override
+@@ -261,8 +276,6 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+                 onToggleSoftKeyboardRequest();
+             } else if (unicodeChar == 'm'/* menu */) {
+                 mActivity.getTerminalView().showContextMenu();
+-            } else if (unicodeChar == 'r'/* rename */) {
+-                mTermuxTerminalSessionActivityClient.renameSession(currentSession);
+             } else if (unicodeChar == 'c'/* create */) {
+                 mTermuxTerminalSessionActivityClient.addNewSession(false, null);
+             } else if (unicodeChar == 'u' /* urls */) {
+@@ -481,9 +494,6 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+                             case TermuxPropertyConstants.ACTION_SHORTCUT_PREVIOUS_SESSION:
+                                 mTermuxTerminalSessionActivityClient.switchToSession(false);
+                                 return true;
+-                            case TermuxPropertyConstants.ACTION_SHORTCUT_RENAME_SESSION:
+-                                mTermuxTerminalSessionActivityClient.renameSession(mActivity.getCurrentSession());
+-                                return true;
+                         }
+                     }
+                 }
+@@ -741,7 +751,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
+     }
+ 
+     private void reportIssueFromTranscript(String transcriptText, boolean addTermuxDebugInfo) {
+-        Logger.showToast(mActivity, mActivity.getString(R.string.msg_generating_report), true);
++        mActivity.showTerminalStatus(mActivity.getString(R.string.msg_generating_report), true);
+ 
+         new Thread() {
+             @Override
 diff --git a/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java b/app/src/main/java/com/termux/app/terminal/io/FullTranscriptCopyQueue.java
 new file mode 100644
 index 0000000..e4ea567
@@ -266,6 +713,132 @@ index 0000000..e4ea567
 +    /** Advance after the current part has been written to the clipboard. */
 +    boolean advance() {
 +        return ++partIndex < parts.size();
++    }
++}
+diff --git a/app/src/main/java/com/termux/app/terminal/io/TerminalToolbarViewPager.java b/app/src/main/java/com/termux/app/terminal/io/TerminalToolbarViewPager.java
+index a526570..3db5f9a 100644
+--- a/app/src/main/java/com/termux/app/terminal/io/TerminalToolbarViewPager.java
++++ b/app/src/main/java/com/termux/app/terminal/io/TerminalToolbarViewPager.java
+@@ -1,5 +1,6 @@
+ package com.termux.app.terminal.io;
+ 
++import android.graphics.Typeface;
+ import android.view.LayoutInflater;
+ import android.view.View;
+ import android.view.ViewGroup;
+@@ -46,6 +47,7 @@ public class TerminalToolbarViewPager {
+                 ExtraKeysView extraKeysView = (ExtraKeysView) layout;
+                 extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
+                 extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
++                extraKeysView.setButtonTypeface(Typeface.MONOSPACE);
+                 mActivity.setExtraKeysView(extraKeysView);
+                 extraKeysView.reload(mActivity.getTermuxTerminalExtraKeys().getExtraKeysInfo(),
+                     mActivity.getTerminalToolbarDefaultHeight());
+diff --git a/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptDownloads.java b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptDownloads.java
+new file mode 100644
+index 0000000..fc67cb7
+--- /dev/null
++++ b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptDownloads.java
+@@ -0,0 +1,101 @@
++package com.termux.app.terminal.io;
++
++import android.Manifest;
++import android.content.ContentResolver;
++import android.content.ContentValues;
++import android.content.Context;
++import android.content.pm.PackageManager;
++import android.net.Uri;
++import android.os.Build;
++import android.os.Environment;
++import android.provider.MediaStore;
++
++import androidx.annotation.RequiresApi;
++import androidx.core.content.ContextCompat;
++
++import java.io.BufferedWriter;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.io.OutputStreamWriter;
++import java.nio.charset.StandardCharsets;
++import java.text.SimpleDateFormat;
++import java.util.Date;
++import java.util.Locale;
++import java.util.UUID;
++
++final class TerminalTranscriptDownloads {
++
++    private TerminalTranscriptDownloads() {}
++
++    static boolean canWrite(Context context) {
++        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
++            || ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
++                == PackageManager.PERMISSION_GRANTED;
++    }
++
++    static String save(Context context, String transcript) throws IOException {
++        String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
++        String name = "termux-transcript-" + timestamp + "-" + UUID.randomUUID().toString().substring(0, 8) + ".txt";
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++            saveWithMediaStore(context.getContentResolver(), name, transcript);
++        } else {
++            saveToLegacyDownloads(name, transcript);
++        }
++        return name;
++    }
++
++    @RequiresApi(Build.VERSION_CODES.Q)
++    private static void saveWithMediaStore(ContentResolver resolver, String name, String transcript)
++            throws IOException {
++        ContentValues values = new ContentValues();
++        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
++        values.put(MediaStore.Downloads.MIME_TYPE, TerminalTranscriptFileProvider.MIME_TYPE);
++        values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/");
++        values.put(MediaStore.Downloads.IS_PENDING, 1);
++
++        Uri file = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
++        if (file == null) throw new IOException("Could not create transcript in Downloads");
++
++        try {
++            OutputStream stream = resolver.openOutputStream(file);
++            if (stream == null) throw new IOException("Could not open transcript for writing");
++            writeText(stream, transcript);
++
++            values.clear();
++            values.put(MediaStore.Downloads.IS_PENDING, 0);
++            if (resolver.update(file, values, null, null) != 1)
++                throw new IOException("Could not publish transcript in Downloads");
++        } catch (IOException | RuntimeException e) {
++            try {
++                resolver.delete(file, null, null);
++            } catch (RuntimeException cleanupError) {
++                e.addSuppressed(cleanupError);
++            }
++            throw e;
++        }
++    }
++
++    @SuppressWarnings("deprecation")
++    private static void saveToLegacyDownloads(String name, String transcript) throws IOException {
++        File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
++        if (!downloads.isDirectory() && !downloads.mkdirs() && !downloads.isDirectory())
++            throw new IOException("Could not create Downloads directory");
++
++        File temp = File.createTempFile(".termux-transcript-", ".tmp", downloads);
++        try {
++            writeText(new FileOutputStream(temp), transcript);
++            if (!temp.renameTo(new File(downloads, name)))
++                throw new IOException("Could not publish transcript in Downloads");
++        } finally {
++            temp.delete();
++        }
++    }
++
++    private static void writeText(OutputStream stream, String transcript) throws IOException {
++        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(stream, StandardCharsets.UTF_8))) {
++            writer.write(transcript);
++        }
 +    }
 +}
 diff --git a/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java b/app/src/main/java/com/termux/app/terminal/io/TerminalTranscriptFileProvider.java
@@ -326,7 +899,7 @@ index 0000000..ed38ea8
 +    }
 +}
 diff --git a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
-index a38e8cb..c5642aa 100644
+index a38e8cb..78ac6a5 100644
 --- a/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
 +++ b/app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java
 @@ -1,12 +1,19 @@
@@ -349,7 +922,7 @@ index a38e8cb..c5642aa 100644
  import com.termux.app.TermuxActivity;
  import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
  import com.termux.app.terminal.TermuxTerminalViewClient;
-@@ -16,13 +23,22 @@ import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
+@@ -16,13 +23,25 @@ import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
  import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
  import com.termux.shared.termux.settings.properties.TermuxSharedProperties;
  import com.termux.shared.termux.terminal.io.TerminalExtraKeys;
@@ -361,18 +934,37 @@ index a38e8cb..c5642aa 100644
 +import java.io.IOException;
 +import java.util.Map;
 +import java.util.WeakHashMap;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
 +
  public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
  
 +    // Plain text is parceled as UTF-16. Leave space in Binder's shared transaction buffer.
 +    private static final int MAX_INLINE_TRANSCRIPT_LENGTH = 200_000;
++    private static final ExecutorService DOWNLOADS_EXECUTOR = Executors.newSingleThreadExecutor();
 +
      private ExtraKeysInfo mExtraKeysInfo;
 +    private final Map<TerminalEmulator, FullTranscriptCopyQueue> mFullCopyQueues = new WeakHashMap<>();
  
      final TermuxActivity mActivity;
      final TermuxTerminalViewClient mTermuxTerminalViewClient;
-@@ -93,6 +109,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+@@ -64,13 +83,13 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+ 
+             mExtraKeysInfo = new ExtraKeysInfo(extrakeys, extraKeysStyle, ExtraKeysConstants.CONTROL_CHARS_ALIASES);
+         } catch (JSONException e) {
+-            Logger.showToast(mActivity, "Could not load and set the \"" + TermuxPropertyConstants.KEY_EXTRA_KEYS + "\" property from the properties file: " + e.toString(), true);
++            mActivity.showTerminalStatus("Could not load the extra-keys setting", true);
+             Logger.logStackTraceWithMessage(LOG_TAG, "Could not load and set the \"" + TermuxPropertyConstants.KEY_EXTRA_KEYS + "\" property from the properties file: ", e);
+ 
+             try {
+                 mExtraKeysInfo = new ExtraKeysInfo(TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS, TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS_STYLE, ExtraKeysConstants.CONTROL_CHARS_ALIASES);
+             } catch (JSONException e2) {
+-                Logger.showToast(mActivity, "Can't create default extra keys",true);
++                mActivity.showTerminalStatus("Can't create default extra keys", true);
+                 Logger.logStackTraceWithMessage(LOG_TAG, "Could create default extra keys: ", e);
+                 mExtraKeysInfo = null;
+             }
+@@ -93,6 +112,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
                  drawerLayout.closeDrawer(Gravity.LEFT);
              else
                  drawerLayout.openDrawer(Gravity.LEFT);
@@ -381,7 +973,7 @@ index a38e8cb..c5642aa 100644
          } else if ("PASTE".equals(key)) {
              if(mTermuxTerminalSessionActivityClient != null)
                  mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
-@@ -105,4 +123,83 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
+@@ -105,4 +126,106 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
          }
      }
  
@@ -396,9 +988,11 @@ index a38e8cb..c5642aa 100644
 +                return;
 +            }
 +
-+            String text = "COPY".equals(key) ? emulator.getCopyLastOutput() : emulator.getCopyAllText();
++            boolean copyLastOutput = "COPY".equals(key);
++            String text = copyLastOutput ? emulator.getCopyLastOutput() : emulator.getCopyAllText();
 +            if (text == null || text.isEmpty()) {
-+                mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
++                if (!copyLastOutput)
++                    mActivity.showTerminalStatus(mActivity.getString(R.string.msg_no_terminal_transcript), false);
 +                return;
 +            }
 +
@@ -411,11 +1005,11 @@ index a38e8cb..c5642aa 100644
 +                mActivity.startActivity(Intent.createChooser(intent, mActivity.getString(R.string.title_share_transcript)));
 +            } else {
 +                copyTranscript(text);
-+                mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_copied), true);
++                mActivity.showTerminalStatus(mActivity.getString(R.string.msg_terminal_transcript_copied), true);
 +            }
 +        } catch (IOException | RuntimeException e) {
 +            Logger.logStackTraceWithMessage(LOG_TAG, "Could not copy or share the transcript", e);
-+            mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_transfer_failed), true);
++            mActivity.showTerminalStatus(mActivity.getString(R.string.msg_terminal_transcript_transfer_failed), true);
 +        }
 +    }
 +
@@ -424,11 +1018,12 @@ index a38e8cb..c5642aa 100644
 +        if (queue == null) {
 +            String snapshot = emulator.getCopyAllText();
 +            if (snapshot.isEmpty()) {
-+                mActivity.showToast(mActivity.getString(R.string.msg_no_terminal_transcript), false);
++                mActivity.showTerminalStatus(mActivity.getString(R.string.msg_no_terminal_transcript), false);
 +                return;
 +            }
 +            queue = new FullTranscriptCopyQueue(snapshot);
 +            mFullCopyQueues.put(emulator, queue);
++            if (queue.partCount() > 1) saveFullTranscriptToDownloads(snapshot);
 +        }
 +
 +        int part = queue.partNumber();
@@ -438,12 +1033,32 @@ index a38e8cb..c5642aa 100644
 +        if (!hasMore) mFullCopyQueues.remove(emulator);
 +
 +        if (total == 1) {
-+            mActivity.showToast(mActivity.getString(R.string.msg_terminal_transcript_copied), true);
++            mActivity.showTerminalStatus(mActivity.getString(R.string.msg_terminal_transcript_copied), true);
 +        } else {
 +            int message = hasMore ? R.string.msg_terminal_transcript_part_copied
 +                : R.string.msg_terminal_transcript_final_part_copied;
-+            mActivity.showToast(mActivity.getString(message, part, total), true);
++            mActivity.showTerminalStatus(mActivity.getString(message, part, total), true);
 +        }
++    }
++
++    private void saveFullTranscriptToDownloads(String snapshot) {
++        Context context = mActivity.getApplicationContext();
++        DOWNLOADS_EXECUTOR.execute(() -> {
++            String message;
++            try {
++                if (TerminalTranscriptDownloads.canWrite(context)) {
++                    String name = TerminalTranscriptDownloads.save(context, snapshot);
++                    message = context.getString(R.string.msg_terminal_transcript_saved, name);
++                } else {
++                    message = context.getString(R.string.msg_terminal_transcript_storage_permission_needed);
++                }
++            } catch (IOException | RuntimeException e) {
++                Logger.logStackTraceWithMessage(LOG_TAG, "Could not save the transcript in Downloads", e);
++                message = context.getString(R.string.msg_terminal_transcript_save_failed);
++            }
++            String status = message;
++            mActivity.runOnUiThread(() -> mActivity.showTerminalStatus(status, true));
++        });
 +    }
 +
 +    private void copyTranscript(String text) throws IOException {
@@ -465,26 +1080,39 @@ index a38e8cb..c5642aa 100644
 +    }
 +
  }
-diff --git a/app/src/main/res/drawable/ic_open_sessions_drawer.xml b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
+diff --git a/app/src/main/res/drawable/ic_delete_session.xml b/app/src/main/res/drawable/ic_delete_session.xml
 new file mode 100644
-index 0000000..fc9377f
+index 0000000..4a00355
 --- /dev/null
-+++ b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
-@@ -0,0 +1,15 @@
++++ b/app/src/main/res/drawable/ic_delete_session.xml
+@@ -0,0 +1,11 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<vector xmlns:android="http://schemas.android.com/apk/res/android"
-+    android:width="52dp"
-+    android:height="52dp"
-+    android:viewportWidth="48"
-+    android:viewportHeight="48">
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="@android:color/white"
++        android:pathData="M6,19c0,1.1 0.9,2 2,2h8c1.1,0 2,-0.9 2,-2V7H6v12zM8,9h8v10H8zM15.5,4l-1,-1h-5l-1,1H5v2h14V4z"
++        android:fillType="evenOdd" />
++</vector>
+diff --git a/app/src/main/res/drawable/ic_open_sessions_drawer.xml b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
+new file mode 100644
+index 0000000..f4ede47
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_open_sessions_drawer.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
 +
 +    <path
-+        android:fillColor="@color/session_arrow_surface"
-+        android:pathData="M24,4a20,20 0,1 1,0 40a20,20 0,1 1,0 -40Z" />
-+
-+    <path
-+        android:fillColor="@android:color/black"
-+        android:pathData="M15,23h14.17l-5.59,-5.59L25,16l8,8l-8,8l-1.42,-1.41L29.17,25H15Z" />
++        android:fillColor="@android:color/white"
++        android:pathData="M3,11h14.17l-5.59,-5.59L13,4l8,8l-8,8l-1.42,-1.41L17.17,13H3Z" />
 +</vector>
 diff --git a/app/src/main/res/drawable/session_delete_dialog_background.xml b/app/src/main/res/drawable/session_delete_dialog_background.xml
 new file mode 100644
@@ -499,10 +1127,10 @@ index 0000000..b6b7cce
 +    <corners android:radius="4dp" />
 +</shape>
 diff --git a/app/src/main/res/layout/activity_termux.xml b/app/src/main/res/layout/activity_termux.xml
-index 831ea7c..41034f6 100644
+index 831ea7c..38db2ee 100644
 --- a/app/src/main/res/layout/activity_termux.xml
 +++ b/app/src/main/res/layout/activity_termux.xml
-@@ -23,27 +23,48 @@
+@@ -23,27 +23,71 @@
              android:layout_above="@+id/terminal_toolbar_view_pager"
              android:layout_height="match_parent">
  
@@ -518,18 +1146,41 @@ index 831ea7c..41034f6 100644
 -                tools:ignore="UnusedAttribute" />
 +                android:orientation="vertical">
 +
-+                <ImageButton
-+                    android:id="@+id/open_sessions_drawer_button"
-+                    android:layout_width="52dp"
-+                    android:layout_height="52dp"
-+                    android:layout_gravity="left"
-+                    android:layout_marginStart="8dp"
-+                    android:background="@null"
-+                    android:contentDescription="@string/action_open_sessions_drawer"
-+                    android:foreground="?attr/selectableItemBackgroundBorderless"
-+                    android:padding="0dp"
-+                    android:src="@drawable/ic_open_sessions_drawer"
-+                    tools:ignore="RtlHardcoded" />
++                <LinearLayout
++                    android:layout_width="match_parent"
++                    android:layout_height="48dp"
++                    android:gravity="center_vertical"
++                    android:layoutDirection="ltr"
++                    android:orientation="horizontal">
++
++                    <ImageButton
++                        android:id="@+id/open_sessions_drawer_button"
++                        android:layout_width="48dp"
++                        android:layout_height="48dp"
++                        android:layout_marginStart="4dp"
++                        android:background="@null"
++                        android:contentDescription="@string/action_open_sessions_drawer"
++                        android:foreground="?attr/selectableItemBackgroundBorderless"
++                        android:padding="0dp"
++                        android:scaleType="center"
++                        android:src="@drawable/ic_open_sessions_drawer" />
++
++                    <TextView
++                        android:id="@+id/terminal_status_message"
++                        android:layout_width="0dp"
++                        android:layout_height="wrap_content"
++                        android:layout_marginStart="12dp"
++                        android:layout_marginEnd="12dp"
++                        android:layout_weight="1"
++                        android:accessibilityLiveRegion="polite"
++                        android:ellipsize="end"
++                        android:gravity="end"
++                        android:maxLines="2"
++                        android:textColor="@color/terminal_status_text"
++                        android:textSize="12sp"
++                        android:visibility="invisible" />
++
++                </LinearLayout>
 +
 +                <com.termux.view.TerminalView
 +                    android:id="@+id/terminal_view"
@@ -579,30 +1230,78 @@ index 0000000..3418b94
 +    android:textAllCaps="false"
 +    android:textColor="#212121"
 +    android:textSize="16sp" />
+diff --git a/app/src/main/res/layout/item_terminal_sessions_list.xml b/app/src/main/res/layout/item_terminal_sessions_list.xml
+index 46cfecc..2e200c7 100644
+--- a/app/src/main/res/layout/item_terminal_sessions_list.xml
++++ b/app/src/main/res/layout/item_terminal_sessions_list.xml
+@@ -1,9 +1,32 @@
+-<com.google.android.material.textview.MaterialTextView xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:id="@+id/session_title"
+-    android:layout_width="fill_parent"
+-    android:layout_height="?android:attr/listPreferredItemHeight"
++<?xml version="1.0" encoding="utf-8"?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:app="http://schemas.android.com/apk/res-auto"
++    android:layout_width="match_parent"
++    android:layout_height="56dp"
+     android:background="@drawable/session_background_selected"
+-    android:ellipsize="marquee"
+-    android:gravity="start|center_vertical"
+-    android:padding="6dip"
+-    android:textSize="14sp" />
++    android:gravity="center_vertical"
++    android:orientation="horizontal"
++    android:paddingStart="16dp"
++    android:paddingEnd="4dp">
++
++    <com.google.android.material.textview.MaterialTextView
++        android:id="@+id/session_number"
++        android:layout_width="0dp"
++        android:layout_height="match_parent"
++        android:layout_weight="1"
++        android:fontFamily="monospace"
++        android:gravity="start|center_vertical"
++        android:textSize="16sp" />
++
++    <ImageButton
++        android:id="@+id/delete_session_icon"
++        android:layout_width="48dp"
++        android:layout_height="48dp"
++        android:background="?attr/selectableItemBackgroundBorderless"
++        android:contentDescription="@string/action_delete_session"
++        android:focusable="false"
++        android:padding="12dp"
++        android:src="@drawable/ic_delete_session"
++        app:tint="?attr/termuxActivityDrawerImageTint" />
++
++</LinearLayout>
 diff --git a/app/src/main/res/values/colors.xml b/app/src/main/res/values/colors.xml
-index 045e125..58ba42d 100644
+index 045e125..0d37d9a 100644
 --- a/app/src/main/res/values/colors.xml
 +++ b/app/src/main/res/values/colors.xml
 @@ -1,3 +1,5 @@
  <?xml version="1.0" encoding="utf-8"?>
  <resources>
 +    <color name="session_surface">#ECE8DF</color>
-+    <color name="session_arrow_surface">#D4CDC1</color>
++    <color name="terminal_status_text">#D0D0D0</color>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cbd2992..c40a4ae 100644
+index cbd2992..122305f 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -42,6 +42,8 @@
+@@ -42,6 +42,11 @@
  
  
      <!-- Terminal Sidebar and Shortcuts -->
 +    <string name="action_open_sessions_drawer">Open sessions menu</string>
 +    <string name="action_delete_session">Delete</string>
++    <string name="action_delete_session_number">Delete session %1$d</string>
++    <string name="msg_numbered_session">Session %1$d</string>
++    <string name="msg_numbered_session_exited">Session %1$d exited</string>
      <string name="action_new_session">New session</string>
      <string name="action_new_session_failsafe">Failsafe</string>
      <string name="title_max_terminals_reached">Max terminals reached</string>
-@@ -68,6 +70,11 @@
+@@ -68,6 +73,14 @@
      <string name="action_share_transcript">Share transcript</string>
      <string name="title_share_transcript">Terminal transcript</string>
      <string name="title_share_transcript_with">Send transcript to:</string>
@@ -610,6 +1309,9 @@ index cbd2992..c40a4ae 100644
 +    <string name="msg_terminal_transcript_copied">Transcript copied. Use Paste in the text field.</string>
 +    <string name="msg_terminal_transcript_part_copied">Copied %1$d/%2$d. Paste, then tap FULL again.</string>
 +    <string name="msg_terminal_transcript_final_part_copied">Copied %1$d/%2$d. This is the last part.</string>
++    <string name="msg_terminal_transcript_saved">Full log saved in Downloads\n%1$s</string>
++    <string name="msg_terminal_transcript_save_failed">Could not save the full log in Downloads</string>
++    <string name="msg_terminal_transcript_storage_permission_needed">Allow storage access to save the full log in Downloads</string>
 +    <string name="msg_terminal_transcript_transfer_failed">Could not copy or share the terminal transcript</string>
  
      <string name="action_share_selected_text">Share selected text</string>
@@ -691,10 +1393,10 @@ index 0000000..53b3f81
 +    }
 +}
 diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
-index 5e943ab..1105246 100644
+index 5e943ab..4f477f3 100644
 --- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
 +++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java
-@@ -3537,8 +3537,64 @@ public final class TerminalEmulator {
+@@ -3537,8 +3537,74 @@ public final class TerminalEmulator {
          }
      }
  
@@ -703,7 +1405,7 @@ index 5e943ab..1105246 100644
 +    private String mCopyPastedText;
 +
 +    public void markCopiedPaste(String text) {
-+        if (text == null || text.isEmpty()) return;
++        if (text == null || text.trim().isEmpty()) return;
 +        mCopyPasteSnapshot = getCopyAllText();
 +        mCopyPastedText = text;
 +    }
@@ -733,8 +1435,19 @@ index 5e943ab..1105246 100644
 +        }
 +        String[] pasted = mCopyPastedText.replace("\r\n", "\n").replace('\r', '\n').split("\n");
 +        String[] rows = current.substring(begin).split("\n", -1);
++        int end = rows.length;
++        String finalPrompt = rows[end - 1].trim();
++        if (!finalPrompt.isEmpty() && "$#>%❯".indexOf(finalPrompt.charAt(finalPrompt.length() - 1)) >= 0) {
++            // Empty Enter presses echo the same prompt again without producing output.
++            while (end > 0) {
++                String line = rows[end - 1].trim();
++                if (!line.isEmpty() && !line.equals(finalPrompt)) break;
++                end--;
++            }
++        }
++
 +        StringBuilder output = new StringBuilder();
-+        for (int i = 0; i < rows.length; i++) {
++        for (int i = 0; i < end; i++) {
 +            String line = rows[i].trim();
 +            boolean isInputEcho = false;
 +            for (String original : pasted) {
@@ -747,7 +1460,6 @@ index 5e943ab..1105246 100644
 +                }
 +            }
 +            if (isInputEcho) continue;
-+            if (i == rows.length - 1 && line.matches(".*[$#>%❯]")) continue;
 +            output.append(rows[i]).append('\n');
 +        }
 +        return output.toString().trim();
@@ -775,10 +1487,10 @@ index caea870..40d8ffc 100644
                  Os.kill(mShellPid, OsConstants.SIGKILL);
              } catch (ErrnoException e) {
 diff --git a/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java b/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java
-index 17f8111..7185458 100644
+index 17f8111..bb081d6 100644
 --- a/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java
 +++ b/terminal-emulator/src/test/java/com/termux/terminal/HistoryTest.java
-@@ -30,4 +30,20 @@ public class HistoryTest extends TerminalTestCase {
+@@ -30,4 +30,41 @@ public class HistoryTest extends TerminalTestCase {
  		enterString("LMN").assertLinesAre("111", "IJK", "LMN", "444").assertHistoryStartsWith("FGH", "CDE");
  	}
  
@@ -796,6 +1508,27 @@ index 17f8111..7185458 100644
 +		mTerminal.markCopiedPaste("long-command");
 +		enterString("long-command\r\nlong-output\r\n$ ");
 +		assertEquals("long-output", mTerminal.getCopyLastOutput());
++	}
++
++	public void testBlankEnterDoesNotCopyRepeatedPrompts() {
++		withTerminalSized(32, 7).enterString("~ $ ");
++		mTerminal.markCopiedPaste("true");
++		enterString("true\r\n~ $ \r\n~ $ \r\n~ $ ");
++		assertEquals("", mTerminal.getCopyLastOutput());
++	}
++
++	public void testBlankEnterKeepsRealOutput() {
++		withTerminalSized(32, 7).enterString("~ $ ");
++		mTerminal.markCopiedPaste("example");
++		enterString("example\r\nresult >\r\n~ $ \r\n~ $ ");
++		assertEquals("result >", mTerminal.getCopyLastOutput());
++	}
++
++	public void testWhitespacePasteDoesNotStartCopyCapture() {
++		withTerminalSized(32, 7).enterString("~ $ ");
++		mTerminal.markCopiedPaste(" \r\n");
++		enterString("\r\n~ $ ");
++		assertNull(mTerminal.getCopyLastOutput());
 +	}
 +
  }
@@ -835,10 +1568,18 @@ index 2f5bb4a..fdfb98c 100644
                  JSONObject jobject = normalizeKeyConfig(key);
  
 diff --git a/termux-shared/src/main/java/com/termux/shared/termux/extrakeys/ExtraKeysView.java b/termux-shared/src/main/java/com/termux/shared/termux/extrakeys/ExtraKeysView.java
-index 4fbbf1e..6c0baf3 100644
+index 4fbbf1e..a392eeb 100644
 --- a/termux-shared/src/main/java/com/termux/shared/termux/extrakeys/ExtraKeysView.java
 +++ b/termux-shared/src/main/java/com/termux/shared/termux/extrakeys/ExtraKeysView.java
-@@ -27,6 +27,7 @@ import android.view.ViewConfiguration;
+@@ -2,6 +2,7 @@ package com.termux.shared.termux.extrakeys;
+ 
+ import android.annotation.SuppressLint;
+ import android.content.Context;
++import android.graphics.Typeface;
+ import android.os.Build;
+ import android.os.Handler;
+ import android.os.Looper;
+@@ -27,6 +28,7 @@ import android.view.ViewConfiguration;
  import android.view.ViewGroup;
  import android.widget.GridLayout;
  import android.widget.PopupWindow;
@@ -846,7 +1587,26 @@ index 4fbbf1e..6c0baf3 100644
  
  import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
-@@ -401,6 +402,19 @@ public final class ExtraKeysView extends GridLayout {
+@@ -179,6 +181,7 @@ public final class ExtraKeysView extends GridLayout {
+ 
+     /** Defines whether text for the extra keys button should be all capitalized automatically. */
+     protected boolean mButtonTextAllCaps = true;
++    private Typeface mButtonTypeface;
+ 
+ 
+     /**
+@@ -332,6 +335,10 @@ public final class ExtraKeysView extends GridLayout {
+         mButtonTextAllCaps = buttonTextAllCaps;
+     }
+ 
++    public void setButtonTypeface(Typeface buttonTypeface) {
++        mButtonTypeface = buttonTypeface;
++    }
++
+ 
+     /** Get {@link #mLongPressTimeout}. */
+     public int getLongPressTimeout() {
+@@ -401,6 +408,19 @@ public final class ExtraKeysView extends GridLayout {
              for (int col = 0; col < buttons[row].length; col++) {
                  final ExtraKeyButton buttonInfo = buttons[row][col];
  
@@ -866,7 +1626,18 @@ index 4fbbf1e..6c0baf3 100644
                  MaterialButton button;
                  if (isSpecialButton(buttonInfo)) {
                      button = createSpecialButton(buttonInfo.getKey(), true);
-@@ -469,19 +483,7 @@ public final class ExtraKeysView extends GridLayout {
+@@ -412,6 +432,10 @@ public final class ExtraKeysView extends GridLayout {
+                 button.setText(buttonInfo.getDisplay());
+                 button.setTextColor(mButtonTextColor);
+                 button.setAllCaps(mButtonTextAllCaps);
++                if (mButtonTypeface != null) {
++                    button.setTypeface(mButtonTypeface);
++                    button.setLetterSpacing(0f);
++                }
+                 button.setPadding(0, 0, 0, 0);
+ 
+                 button.setOnClickListener(view -> {
+@@ -469,19 +493,7 @@ public final class ExtraKeysView extends GridLayout {
                      }
                  });
  
@@ -888,7 +1659,7 @@ index 4fbbf1e..6c0baf3 100644
          }
      }
 diff --git a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
-index dd935f3..df13aab 100644
+index dd935f3..61c3e4b 100644
 --- a/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
 +++ b/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java
 @@ -325,8 +325,7 @@ public final class TermuxPropertyConstants {
@@ -897,7 +1668,7 @@ index dd935f3..df13aab 100644
      public static final String KEY_EXTRA_KEYS =  "extra-keys"; // Default: "extra-keys"
 -    //public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]"; // Single row
 -    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Double row
-+    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['CTRL','COPY',{key: 'FULL', popup: {key: 'SHARE-FULL', display: 'TXT'}},null,null,null,null]]";
++    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['CTRL','COPY',{key: 'FULL', popup: {key: 'SHARE-FULL', display: 'TXT'}}]]";
  
      /** Defines the key for extra keys style */
      public static final String KEY_EXTRA_KEYS_STYLE =  "extra-keys-style"; // Default: "extra-keys-style"
